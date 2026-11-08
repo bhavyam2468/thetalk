@@ -578,9 +578,17 @@ impl AppState {
         let now = self.now_secs();
 
         // Poll LLM events (`ModelsFetched`, `ModelAutoSelected`, `Delta`, `Finished`, `Error`)
-        // A fast producer must not monopolize the UI thread indefinitely.
-        for _ in 0..128 {
-            let Ok(ev) = self.llm_rx.try_recv() else { break; };
+        // Bound work, and apply only the latest full-text snapshot in a batch.
+        // Reprocessing 128 growing replies before one paint makes token bursts
+        // O(batch * reply length) without making any extra pixels visible.
+        let events: Vec<_> = self.llm_rx.try_iter().take(128).collect();
+        let last_snapshot = events.iter().rposition(|event| match event {
+            LlmEvent::Delta { req_id, .. } | LlmEvent::Finished { req_id, .. } => Some(*req_id) == self.active_req_id,
+            _ => false,
+        });
+        for (index, ev) in events.into_iter().enumerate() {
+            if matches!(&ev, LlmEvent::Delta { req_id, .. } if Some(*req_id) == self.active_req_id)
+                && Some(index) != last_snapshot { continue; }
             match ev {
                 LlmEvent::ModelsFetched(res) => {
                     self.loading_models = false;

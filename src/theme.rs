@@ -41,7 +41,7 @@ impl ThemeMode {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Rgba {
     pub r: u8,
     pub g: u8,

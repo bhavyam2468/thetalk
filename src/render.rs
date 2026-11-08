@@ -368,7 +368,7 @@ impl Renderer {
 
             // Every route uses the same outgoing-content retention. Reversals
             // capture the currently composited scene, not a hard-coded source.
-            self.retain_panel(card, composer_top, 1.0 - panel_progress);
+            self.retain_panel(card, composer_top, (1.0 - panel_progress) * presence);
 
             // Whisper-thin hairline divider above composer bar
             self.fill_rect_logical(
@@ -1167,7 +1167,9 @@ impl Renderer {
         let mut hash = std::collections::hash_map::DefaultHasher::new();
         msg_idx.hash(&mut hash);
         inner_w.to_bits().hash(&mut hash);
-        theme.fg.r.hash(&mut hash); // theme is one of two immutable palettes
+        [theme.fg, theme.muted, theme.faint, theme.accent, theme.success, theme.danger,
+            theme.syn_keyword, theme.syn_string, theme.syn_number, theme.syn_type, theme.syn_comment]
+            .hash(&mut hash);
         (msg.role == Role::User).hash(&mut hash);
         if msg.role == Role::User { msg.raw_content.hash(&mut hash); }
         else { msg.stream.shown_text().hash(&mut hash); }

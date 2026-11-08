@@ -56,9 +56,9 @@ Remaining debt / next measured work:
 - Clipboard reads, config saves and a few model-selection persistence operations
   still run synchronously. They can stall UI input; move them to a bounded task
   service with explicit editor/revision identity before promising zero stalls.
-- Markdown is parsed/shaped again during animation. Profile/cache immutable
-  document structure separately from optical frontier state before introducing
-  threads or unsupported performance claims.
+- Follow-up: unchanged message layouts are now retained independently of optical
+  state; changing streamed messages still reparse/reshape. See
+  `docs/RENDERING_RESEARCH.md` for caching, clipping, overflow and profiling changes.
 - Retained panel snapshots use bounded surface-sized storage and reuse their
   byte allocation. They still copy pixels while visible; measure memory bandwidth
   at 2x/4x. Text must not be geometrically scaled during panel transitions.
@@ -77,3 +77,12 @@ app then type continuously while streaming; hover back without clicking must
 not reclaim keyboard. Rounded corner/shadow clicks must pass through. Hidden
 IPC send must not acquire focus. Run Cargo tests, release build, self-test,
 previews and AppImage self-test, then capture fresh live evidence.
+
+## Markdown/rendering follow-up
+
+Read `docs/RENDERING_RESEARCH.md` for the next audit. Explicit card clicks now
+request focus through the shared summon path when no keyboard enter has been
+delivered; the original assumption that compositor click eligibility alone was
+sufficient did not hold in the user's test. This does not permit hover/stream
+focus requests. Borders/inline decorations now share the chat viewport mask;
+code/table components use shared horizontal overflow and retained layout.

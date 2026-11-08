@@ -59,3 +59,27 @@ Work on `arena/fe7a9b52-thetalk` only. Cloud changes have NOT been compiled or l
 ## Latest shared-interaction refactor (supersedes old focus instructions)
 
 Visible card = OnDemand eligibility, not constant focus ownership. Startup and explicit summon must get keyboard; outside click yields it; hovering must not reclaim it. Click any chat area then type into composer. Escape always hides in ALL routes, preserving drafts/history and not stopping generation. Validate the null-buffer remap/configure handshake on repeated summons. Run the complete route-pair/interruption matrix in `docs/UI_ARCHITECTURE_AUDIT.md`; old screenshots/logs do not validate this refactor. Build from the latest remote commit on `arena/fe7a9b52-thetalk` only.
+
+## Latest Markdown, focus and latency verification
+
+Read `docs/RENDERING_RESEARCH.md` and current `AGENTS.md`. The user found that
+blank chat taps still did not return keyboard ownership: explicit card clicks
+now invoke the shared one-shot request when unfocused. Test actual typing into
+the composer after clicking blank chat, table, code, reasoning and message space;
+then click another application and type while streaming, and hover back without
+clicking (no refocus). Verify no remap/focus loop.
+
+Run `scripts/benchmark-render.sh` (also integrated in verify_on_niri.sh), commit
+small `logs/render-benchmark.jsonl` with host/commit context in verification.log.
+Collect release CPU p50/p95 and live frame cadence at 60/120 Hz before claiming
+performance fixes. Test 1x/2x/4x, long replies and >128-message conversations;
+retain a sample profile externally rather than adding massive traces to git.
+
+Inspect new `05-wide-markdown-clipping.png`. During real streaming, check table
+and code borders, inline decorations, cell text, Copy hitboxes and highlights
+never reach the composer or card exterior while scrolling or resizing. Test
+horizontal touchpad/tilt and Shift+wheel on wide tables and long unwrapped code;
+ordinary vertical scrolling must remain responsive. Exercise reasoning streaming
+with expanded body and repeatedly reverse collapse/expand. Test long local model
+paths and caret/selection clipping in settings. Update screenshots/AppImage only
+after these checks pass; headless/CI success is not live compositor evidence.

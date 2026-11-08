@@ -1,6 +1,6 @@
 # AGENT_CONTEXT.md — Technical Context & Verification Blueprint for `thetalk`
 
-**Write the code so that the evolution of this app feels modular.** Read `AGENTS.md` and `docs/UI_ARCHITECTURE_AUDIT.md` before changing behavior; shared invariants take precedence over legacy instructions below.
+**Write the code so that the evolution of this app feels modular.** Read `AGENTS.md`, `docs/RENDERING_RESEARCH.md` and `docs/UI_ARCHITECTURE_AUDIT.md` before changing behavior; shared invariants take precedence over legacy instructions below.
 
 This file gives a local coding agent complete architectural, protocol, and debugging context for `thetalk` so it can build, verify on a live `niri` Wayland session, inspect screenshots, fix any host-specific edge cases, build the `.AppImage`, and push artifacts/logs directly back to GitHub.
 

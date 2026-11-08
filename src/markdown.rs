@@ -860,3 +860,21 @@ mod code_stream_regressions {
         }
     }
 }
+
+#[cfg(test)]
+mod partial_markdown_stress {
+    use super::*;
+    #[test]
+    fn unicode_and_incomplete_components_keep_valid_spans_at_every_boundary() {
+        let source = "# café **bold**\n\n| A | B |\n|---|---|\n| `x` | العربية |\n\n```rust\nlet café = \"हिन्दी\";\n```\n\n[link](https://github.com) ==mark== ~~strike~~";
+        let theme = Theme::for_mode(crate::theme::ThemeMode::Dark);
+        for end in source.char_indices().map(|(i, _)| i).chain(std::iter::once(source.len())) {
+            let doc = parse_markdown(&source[..end], true, &[], 0.0, &theme);
+            for block in doc.blocks {
+                if let MdBlock::CodeBlock { raw_code, spans, .. } = block {
+                    assert_eq!(raw_code, spans.iter().map(|s| s.text.as_str()).collect::<String>());
+                }
+            }
+        }
+    }
+}
