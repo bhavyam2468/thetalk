@@ -31,6 +31,7 @@ impl SpringSpec {
     };
 
     /// Critically-damped M3 Expressive `defaultEffects` — opacity/color/scroll (never overshoots).
+    #[allow(dead_code)]
     pub const EFFECTS: Self = Self {
         stiffness: 1500.0,
         damping: 80.0,
@@ -154,6 +155,7 @@ impl Spring {
         }
     }
 
+    #[allow(dead_code)]
     pub fn impulse(&mut self, dv: f32) {
         self.velocity += dv;
         self.running = true;
@@ -246,6 +248,7 @@ impl RectSpring {
         }
     }
 
+    #[allow(dead_code)]
     pub fn snap_to(&mut self, r: LogicalRect) {
         self.x.snap_to(r.x);
         self.y.snap_to(r.y);
@@ -274,6 +277,7 @@ impl RectSpring {
         .limit_overshoot(self.target(), 18.0)
     }
 
+    #[allow(dead_code)]
     pub fn is_running(&self) -> bool {
         self.x.is_running() || self.y.is_running() || self.w.is_running() || self.h.is_running()
     }

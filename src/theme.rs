@@ -2,10 +2,13 @@ use serde::{Deserialize, Serialize};
 use tiny_skia::Color;
 
 /// Unified corner radius token (`--r: 12px` in final-chat's Quiet Paper design system).
+#[allow(dead_code)]
 pub const RADIUS: f32 = 12.0;
 /// Proportional inner radius for nested rows (`calc(var(--r) - 4px)`).
+#[allow(dead_code)]
 pub const RADIUS_INNER: f32 = 8.0;
 /// Inline codespan pill radius (`5px`).
+#[allow(dead_code)]
 pub const RADIUS_CODESPAN: f32 = 5.0;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -29,6 +32,7 @@ impl ThemeMode {
         }
     }
 
+    #[allow(dead_code)]
     pub fn label(self) -> &'static str {
         match self {
             Self::Dark => "Dark · Quiet Charcoal",
@@ -64,6 +68,7 @@ impl Rgba {
         Self { a, ..self }
     }
 
+    #[allow(dead_code)]
     pub fn to_skia(self) -> Color {
         Color::from_rgba8(self.r, self.g, self.b, self.a)
     }
@@ -100,6 +105,7 @@ impl Rgba {
 #[derive(Debug, Clone, Copy)]
 pub struct Theme {
     pub mode: ThemeMode,
+    #[allow(dead_code)]
     pub bg: Rgba,
     pub float: Rgba,
     pub bubble: Rgba,

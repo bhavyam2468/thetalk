@@ -79,6 +79,7 @@ pub enum MdBlock {
         lang: String,
         raw_code: String,
         spans: Vec<RichSpan>,
+        #[allow(dead_code)]
         live: bool,
     },
     Table {

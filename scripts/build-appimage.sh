@@ -48,8 +48,17 @@ cp "$ROOT_DIR/packaging/thetalk.desktop" "$APPDIR/thetalk.desktop"
 cp "$ROOT_DIR/packaging/thetalk.desktop" "$APPDIR/usr/share/applications/thetalk.desktop"
 
 cp "$ROOT_DIR/assets/icons/thetalk.svg" "$APPDIR/thetalk.svg"
-cp "$ROOT_DIR/assets/icons/thetalk.svg" "$APPDIR/.DirIcon"
 cp "$ROOT_DIR/assets/icons/thetalk.svg" "$APPDIR/usr/share/icons/hicolor/scalable/apps/thetalk.svg"
+
+if command -v rsvg-convert >/dev/null 2>&1; then
+    rsvg-convert -w 256 -h 256 "$ROOT_DIR/assets/icons/thetalk.svg" -o "$APPDIR/thetalk.png"
+    cp "$APPDIR/thetalk.png" "$APPDIR/.DirIcon"
+elif command -v convert >/dev/null 2>&1; then
+    convert -background none -resize 256x256 "$ROOT_DIR/assets/icons/thetalk.svg" "$APPDIR/thetalk.png"
+    cp "$APPDIR/thetalk.png" "$APPDIR/.DirIcon"
+else
+    cp "$ROOT_DIR/assets/icons/thetalk.svg" "$APPDIR/.DirIcon"
+fi
 
 # Bundle non-glibc leaf library (`libxkbcommon.so.0`) as a portable fallback while never bundling glibc/ld-linux
 if command -v ldd >/dev/null 2>&1; then

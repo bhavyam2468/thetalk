@@ -47,7 +47,9 @@ pub enum HitTarget {
     SettingsClose,
     OpenSettings,
     CopyCode { msg_idx: usize, block_idx: usize },
+    #[allow(dead_code)]
     CopyMessage(usize),
+    #[allow(dead_code)]
     RegenerateLast,
     ToggleThinking(usize),
     LinkUrl { msg_idx: usize, link_idx: usize },

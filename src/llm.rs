@@ -282,10 +282,10 @@ pub fn spawn_chat_stream(
 }
 
 #[derive(Default)]
-struct SseDelta {
-    reasoning: Option<String>,
-    content: Option<String>,
-    error: Option<String>,
+pub struct SseDelta {
+    pub reasoning: Option<String>,
+    pub content: Option<String>,
+    pub error: Option<String>,
 }
 
 pub fn parse_sse_delta(json_str: &str) -> Option<SseDelta> {

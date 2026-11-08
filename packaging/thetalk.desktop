@@ -6,6 +6,6 @@ Comment=Minimalist Wayland layer-shell local LLM chat bar for niri
 Exec=thetalk toggle
 Icon=thetalk
 Terminal=false
-Categories=Utility;Development;Chat;
+Categories=Utility;Network;Chat;Development;
 Keywords=llm;ai;chat;wayland;niri;ollama;
 StartupNotify=false

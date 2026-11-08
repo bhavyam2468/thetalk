@@ -5,6 +5,7 @@ use std::path::PathBuf;
 
 #[derive(Debug, Clone, Copy)]
 pub struct ProviderPreset {
+    #[allow(dead_code)]
     pub id: &'static str,
     pub label: &'static str,
     pub base_url: &'static str,
@@ -122,6 +123,7 @@ impl AppConfig {
         Ok(())
     }
 
+    #[allow(dead_code)]
     pub fn masked_key(&self) -> String {
         let trimmed = self.api_key.trim();
         if trimmed.is_empty() {

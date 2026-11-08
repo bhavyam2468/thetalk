@@ -391,7 +391,9 @@ mod tests {
         let shown = st.shown_text();
         assert!(!shown.is_empty());
         assert!(!st.frontier().is_empty());
-        let state = st.frontier().last().unwrap().evaluate(0.20).unwrap();
+        let state = st.frontier().first().unwrap().evaluate(0.20).unwrap();
         assert!(state.sigma_logical > 2.0 && state.opacity > 0.25);
+        let state_last = st.frontier().last().unwrap().evaluate(0.28).unwrap();
+        assert!(state_last.sigma_logical > 2.0 && state_last.opacity > 0.25);
     }
 }

@@ -84,7 +84,6 @@ pub fn remend(src: &str) -> String {
         let last_pos = *eq_positions.last().unwrap();
         tail.replace_range(last_pos..last_pos + 2, "");
     }
-    let masked = mask_inline_code(&tail);
 
     // 6. Unclosed `[label](url` at the end -> heal to `[label](#)`.
     if let Some(healed) = heal_dangling_link(&tail) {

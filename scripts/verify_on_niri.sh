@@ -58,6 +58,10 @@ if [ -n "${WAYLAND_DISPLAY:-}" ]; then
     TEST_XDG_CFG="$(mktemp -d "${TMPDIR:-/tmp}/thetalk-verify-cfg.XXXXXX")"
     TEST_XDG_RUN="$(mktemp -d "${TMPDIR:-/tmp}/thetalk-verify-run.XXXXXX")"
     chmod 0700 "$TEST_XDG_RUN"
+    REAL_RUNTIME="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+    if [ -e "$REAL_RUNTIME/$WAYLAND_DISPLAY" ]; then
+        ln -sf "$REAL_RUNTIME/$WAYLAND_DISPLAY" "$TEST_XDG_RUN/$WAYLAND_DISPLAY"
+    fi
 
     cleanup_live() {
         XDG_RUNTIME_DIR="$TEST_XDG_RUN" ./target/release/thetalk quit >/dev/null 2>&1 || true
@@ -134,7 +138,7 @@ echo ""
 echo "==> [7/7] Building & Smoke-Testing Portable AppImage"
 "$ROOT_DIR/scripts/build-appimage.sh"
 APPIMAGE_FILE="$ROOT_DIR/releases/thetalk-$(uname -m).AppImage"
-APPIMAGE_EXTRACT_AND_RUN=1 "$APPIMAGE_FILE" --self-test
+APPIMAGELAUNCHER_DISABLE=1 APPIMAGE_EXTRACT_AND_RUN=1 "$APPIMAGE_FILE" --self-test
 
 echo ""
 echo "=================================================================="
