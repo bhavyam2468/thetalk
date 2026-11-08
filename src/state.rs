@@ -12,6 +12,15 @@ use std::sync::{
 };
 use std::time::Instant;
 
+/// The single presentation route. Priority lives here, not in each renderer/input branch.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Panel {
+    Compact,
+    Conversation,
+    Commands,
+    Settings,
+}
+
 /// Geometry constants (logical px)
 pub const SHADOW_PAD_X: f32 = 36.0;
 pub const SHADOW_PAD_TOP: f32 = 38.0;
@@ -394,7 +403,8 @@ pub struct AppState {
 
     // Settings state
     pub settings_open: bool,
-    pub settings_reveal: Spring,
+    pub panel_transition_until: f64,
+    pub summon_generation: u64,
     pub field_base_url: TextField,
     pub field_api_key: TextField,
     pub field_model: TextField,
@@ -422,8 +432,6 @@ pub struct AppState {
 
     // `niri` Zero-Hijack Focus State Machine
     pub has_keyboard_focus: bool,
-    pub summon_focus_requested: bool,
-    pub relinquish_focus_requested: bool,
 }
 
 impl AppState {
@@ -457,7 +465,8 @@ impl AppState {
             last_cursor_activity: 0.0,
             slash_selected: 0,
             settings_open: false,
-            settings_reveal: Spring::new(0.0, SpringSpec::DEFAULT_SPATIAL),
+            panel_transition_until: 0.0,
+            summon_generation: 0,
             field_base_url,
             field_api_key,
             field_model,
@@ -477,8 +486,6 @@ impl AppState {
             pointer_pos: None,
             hit_zones: Vec::new(),
             has_keyboard_focus: false,
-            summon_focus_requested: true,
-            relinquish_focus_requested: false,
         };
 
         if app.config.model.trim().is_empty() {
@@ -512,8 +519,15 @@ impl AppState {
         !self.settings_open && !self.filtered_slash_commands().is_empty()
     }
 
+    pub fn panel(&self) -> Panel {
+        if self.settings_open { Panel::Settings }
+        else if self.slash_menu_open() { Panel::Commands }
+        else if !self.messages.is_empty() { Panel::Conversation }
+        else { Panel::Compact }
+    }
+
     pub fn is_expanded(&self) -> bool {
-        !self.messages.is_empty() || self.settings_open || self.slash_menu_open()
+        self.panel() != Panel::Compact
     }
 
     fn compute_target_rect(expanded: bool, above_bar_h: f32, composer_h: f32) -> LogicalRect {
@@ -540,8 +554,7 @@ impl AppState {
 
         let show_send = !self.composer.text.trim().is_empty() || self.is_streaming();
         self.send_bloom.retarget(if show_send { 1.0 } else { 0.0 });
-        self.settings_reveal
-            .retarget(if self.settings_open { 1.0 } else { 0.0 });
+
     }
 
     /// Advances all physics springs, streaming token revealers, and background LLM events.
@@ -652,7 +665,7 @@ impl AppState {
         moving |= self.card_radius.advance(dt);
         moving |= self.scroll_spring.advance(dt);
         moving |= self.send_bloom.advance(dt);
-        moving |= self.settings_reveal.advance(dt);
+
 
         if !self.visible
             && !self.presence_spring.is_running()
@@ -661,26 +674,14 @@ impl AppState {
             return false;
         }
 
-        moving || any_stream_anim || self.loading_models
+        moving || any_stream_anim || self.loading_models || now < self.panel_transition_until
     }
 
-    /// Computes whether `zwlr_layer_surface_v1` should commit `KeyboardInteractivity::OnDemand`
-    /// (`true`) or `KeyboardInteractivity::None` (`false`) to guarantee zero keystroke hijacking on `niri`.
+    /// Eligibility is not ownership. niri grants OnDemand focus on mapping or
+    /// click, and revokes it when another surface is clicked. Never toggle this
+    /// based on pointer hover, stream events, or individual widget hitboxes.
     pub fn wants_keyboard_on_demand(&self) -> bool {
-        if !self.visible {
-            return false;
-        }
-        if self.relinquish_focus_requested {
-            return false;
-        }
-        if self.summon_focus_requested || self.has_keyboard_focus {
-            return true;
-        }
-        // Unfocused passive overlay mode:
-        // Stay `None` across non-input areas so `niri` focus-follows-mouse and scrolling/Copy clicks
-        // never steal focus from underlying windows. Pre-arm `OnDemand` only when pointer is directly
-        // hovering an editable text field so the very first click focuses it cleanly.
-        self.hovered_input_target().is_some()
+        self.visible
     }
 
     pub fn hovered_hit(&self) -> Option<HitTarget> {
@@ -690,13 +691,6 @@ impl AppState {
             .rev()
             .find(|z| z.rect.contains(px, py))
             .map(|z| z.target)
-    }
-
-    pub fn hovered_input_target(&self) -> Option<FocusTarget> {
-        match self.hovered_hit() {
-            Some(HitTarget::Input(t)) => Some(t),
-            _ => None,
-        }
     }
 
     pub fn active_field_mut(&mut self) -> &mut TextField {
@@ -714,9 +708,7 @@ impl AppState {
         self.field_api_key.set(self.config.api_key.clone());
         self.field_model.set(self.config.model.clone());
         self.focus_target = FocusTarget::SettingsBaseUrl;
-        self.summon_focus_requested = true;
-        self.relinquish_focus_requested = false;
-        self.last_cursor_activity = self.now_secs();
+        self.request_focus();
         self.trigger_model_discovery(false);
     }
 
@@ -786,12 +778,19 @@ impl AppState {
         self.focus_target = FocusTarget::Composer;
     }
 
+    /// Only explicit summon actions request a new mapping/focus grant.
+    pub fn request_focus(&mut self) {
+        if !self.has_keyboard_focus {
+            self.summon_generation = self.summon_generation.wrapping_add(1);
+        }
+        self.last_cursor_activity = self.now_secs();
+    }
+
     pub fn show_overlay(&mut self, grab_focus: bool) {
         self.visible = true;
         self.presence_spring.retarget(1.0);
         if grab_focus {
-            self.summon_focus_requested = true;
-            self.relinquish_focus_requested = false;
+            self.request_focus();
         }
         self.last_cursor_activity = self.now_secs();
     }
@@ -800,8 +799,6 @@ impl AppState {
         self.visible = false;
         self.presence_spring.retarget(0.0);
         self.has_keyboard_focus = false;
-        self.summon_focus_requested = false;
-        self.relinquish_focus_requested = true;
     }
 
     pub fn toggle_overlay(&mut self) {
@@ -950,6 +947,9 @@ impl AppState {
             return;
         }
 
+        if !self.settings_open {
+            self.focus_target = FocusTarget::Composer;
+        }
         let Some(hit) = self.hovered_hit() else {
             return;
         };
@@ -957,8 +957,6 @@ impl AppState {
         match hit {
             HitTarget::Input(target) => {
                 self.focus_target = target;
-                self.summon_focus_requested = true;
-                self.relinquish_focus_requested = false;
             }
             HitTarget::SendOrStop => {
                 if self.is_streaming() {
@@ -1181,24 +1179,13 @@ impl AppState {
         }
 
         match keysym {
-            // Escape
+            // Escape always dismisses the overlay, independent of route,
+            // conversation history, draft content, or streaming state.
             0xff1b => {
                 if self.settings_open {
                     self.save_and_close_settings();
-                } else if self.slash_menu_open() {
-                    self.composer.clear();
-                    self.slash_selected = 0;
-                } else if self.is_streaming() {
-                    self.stop_streaming();
-                } else if shift {
-                    self.hide_overlay();
-                } else if self.messages.is_empty() && self.composer.text.is_empty() {
-                    self.hide_overlay();
-                } else {
-                    // Release keyboard focus back to underlying `niri` window while staying visible!
-                    self.relinquish_focus_requested = true;
-                    self.summon_focus_requested = false;
                 }
+                self.hide_overlay();
             }
             // Return / KP_Enter
             0xff0d | 0xff8d => {

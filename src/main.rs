@@ -4,6 +4,7 @@ mod config;
 mod ipc;
 mod llm;
 mod markdown;
+mod presentation;
 mod remend;
 mod render;
 mod state;

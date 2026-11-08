@@ -1,4 +1,5 @@
 use crate::anim::LogicalRect;
+use crate::presentation::{PanelSnapshot, PanelTransition, TRANSITION_SECONDS};
 use crate::blur::{draw_diffuse_rrect_shadow, BlurScratch};
 use crate::config::{AppConfig, PRESETS};
 use crate::markdown::{
@@ -6,7 +7,7 @@ use crate::markdown::{
     RichSpan, META_CODESPAN, META_LINK, META_MARK, META_STRIKE,
 };
 use crate::state::{
-    AppState, ChatItem, FocusTarget, HitTarget, HitZone, Role, TextField, BAR_MIN_HEIGHT,
+    AppState, ChatItem, FocusTarget, HitTarget, HitZone, Panel, Role, TextField, BAR_MIN_HEIGHT,
     SURFACE_HEIGHT, SURFACE_WIDTH,
 };
 use crate::stream::WordFocusState;
@@ -36,6 +37,9 @@ pub struct Renderer {
     pub pixmap: Pixmap,
     pub mask: Mask,
     pub scale: f32,
+    panel_transition: PanelTransition,
+    previous_panel: Option<PanelSnapshot>,
+    outgoing_panel: Option<PanelSnapshot>,
 }
 
 #[derive(Clone, Copy)]
@@ -146,6 +150,9 @@ impl Renderer {
             pixmap: Pixmap::new(pw.max(1), ph.max(1)).expect("pixmap alloc"),
             mask: Mask::new(pw.max(1), ph.max(1)).expect("mask alloc"),
             scale,
+            panel_transition: PanelTransition::new(),
+            previous_panel: None,
+            outgoing_panel: None,
         }
     }
 
@@ -157,6 +164,8 @@ impl Renderer {
         if self.pixmap.width() != pw || self.pixmap.height() != ph {
             self.pixmap = Pixmap::new(pw, ph).expect("pixmap resize");
             self.mask = Mask::new(pw, ph).expect("mask resize");
+            self.previous_panel = None;
+            self.outgoing_panel = None;
         }
     }
 
@@ -172,6 +181,13 @@ impl Renderer {
         let scale = self.scale;
         let now = state.now_secs();
         let theme = state.theme;
+        let panel = state.panel();
+        if self.panel_transition.update(panel, now) {
+            self.outgoing_panel = self.previous_panel.take();
+            state.panel_transition_until = now + TRANSITION_SECONDS;
+        }
+        let panel_progress = self.panel_transition.progress(now);
+        if panel_progress >= 1.0 { self.outgoing_panel = None; }
 
         // 1. Shape composer text first to compute exact dynamic bar height
         let expanded = state.is_expanded();
@@ -202,12 +218,12 @@ impl Renderer {
         let mut shaped_msgs: Vec<ShapedMessage> = Vec::new();
         let mut messages_total_h = 0.0f32;
 
-        if state.settings_open {
+        if panel == Panel::Settings {
             state.desired_content_height = self.estimate_settings_height(state);
-        } else if state.slash_menu_open() {
+        } else if panel == Panel::Commands {
             let count = state.filtered_slash_commands().len() as f32;
             state.desired_content_height = count * 36.0 + 14.0;
-        } else if !state.messages.is_empty() {
+        } else if panel == Panel::Conversation {
             let mut y_acc = 18.0f32;
             for idx in 0..state.messages.len() {
                 let shaped = self.shape_message(
@@ -295,8 +311,9 @@ impl Renderer {
         let composer_top = card.y + card.h - actual_composer_h;
         let above_h = (composer_top - card.y).max(0.0);
 
+        if above_h <= 4.0 { self.previous_panel = None; }
         if above_h > 4.0 {
-            let content_fade = card.content_opacity(state.card_rect.target());
+            let content_fade = panel_progress;
             let above_clip = ClipBox {
                 x0: ((card.x + 1.0) * scale).floor() as i32,
                 y0: ((card.y + 1.0) * scale).floor() as i32,
@@ -309,9 +326,9 @@ impl Renderer {
                 alpha_mul: presence * content_fade,
             };
 
-            if state.settings_open {
+            if panel == Panel::Settings {
                 self.draw_settings_panel(state, card.x, card.y, card.w, above_h, ctx);
-            } else if state.slash_menu_open() {
+            } else if panel == Panel::Commands {
                 self.draw_slash_menu(state, card.x, composer_top, card.w, ctx);
             } else if !shaped_msgs.is_empty() {
                 let viewport_h = above_h;
@@ -331,6 +348,10 @@ impl Renderer {
                     ctx,
                 );
             }
+
+            // Every route uses the same outgoing-content retention. Reversals
+            // capture the currently composited scene, not a hard-coded source.
+            self.retain_panel(card, composer_top, 1.0 - panel_progress);
 
             // Whisper-thin hairline divider above composer bar
             self.fill_rect_logical(
@@ -371,6 +392,51 @@ impl Renderer {
             theme.line.with_alpha(presence)
         };
         self.stroke_rrect_logical(card.x, card.y, card.w, card.h, radius, 1.0, outer_border);
+    }
+
+    /// Composite the outgoing panel bottom-centered inside the current rounded
+    /// card. No scaling of glyphs; shrink/expand is handled solely by geometry.
+    fn retain_panel(&mut self, card: LogicalRect, composer_top: f32, outgoing_alpha: f32) {
+        let scale = self.scale;
+        let pw = self.pixmap.width() as usize;
+        let ph = self.pixmap.height() as usize;
+        let x0 = (card.x * scale).ceil().max(0.0) as usize;
+        let x1 = ((card.x + card.w) * scale).floor().max(0.0).min(pw as f32) as usize;
+        let y0 = (card.y * scale).ceil().max(0.0) as usize;
+        let y1 = (composer_top * scale).floor().max(0.0).min(ph as f32) as usize;
+        if x1 <= x0 || y1 <= y0 { return; }
+        let w = x1 - x0;
+        let h = y1 - y0;
+        if let Some(old) = &self.outgoing_panel {
+            let ox = (x0 + w / 2) as i32 - (old.width / 2) as i32;
+            let oy = y1 as i32 - old.height as i32;
+            let mask = self.mask.data();
+            let dst = self.pixmap.data_mut();
+            for y in y0..y1 {
+                let sy = y as i32 - oy;
+                if sy < 0 || sy >= old.height as i32 { continue; }
+                for x in x0..x1 {
+                    let sx = x as i32 - ox;
+                    if sx < 0 || sx >= old.width as i32 { continue; }
+                    let pixel = y * pw + x;
+                    let k = outgoing_alpha * mask[pixel] as f32 / 255.0;
+                    let si = (sy as usize * old.width + sx as usize) * 4;
+                    let di = pixel * 4;
+                    let inv = 1.0 - old.pixels[si + 3] as f32 / 255.0 * k;
+                    for c in 0..4 {
+                        dst[di + c] = (old.pixels[si + c] as f32 * k
+                            + dst[di + c] as f32 * inv).round().clamp(0.0, 255.0) as u8;
+                    }
+                }
+            }
+        }
+        let mut pixels = self.previous_panel.take().map(|p| p.pixels).unwrap_or_default();
+        pixels.clear();
+        pixels.reserve(w * h * 4);
+        for y in y0..y1 {
+            pixels.extend_from_slice(&self.pixmap.data()[(y * pw + x0) * 4..(y * pw + x1) * 4]);
+        }
+        self.previous_panel = Some(PanelSnapshot { width: w, height: h, pixels });
     }
 
     fn apply_card_grain(&mut self, card: LogicalRect, grain_amount: f32) {
@@ -2650,7 +2716,7 @@ impl Renderer {
                 st.card_rect.advance(1.0 / 120.0);
                 st.card_radius.advance(1.0 / 120.0);
                 st.presence_spring.advance(1.0 / 120.0);
-                st.settings_reveal.advance(1.0 / 120.0);
+
             }
             renderer.render(&mut st);
             let p = out_dir.join("04-settings-keyless.png");

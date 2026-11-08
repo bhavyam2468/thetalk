@@ -82,6 +82,8 @@ pub struct WaylandApp {
     shell: ShellSurface,
     configured: bool,
     frame_pending: bool,
+    has_mapped: bool,
+    handled_summon: u64,
     needs_redraw: bool,
 
     scale_factor: i32,
@@ -94,7 +96,7 @@ pub struct WaylandApp {
     last_cursor: CursorIcon,
 
     current_kb_mode: KeyboardInteractivity,
-    last_input_region: Option<(i32, i32, i32, i32)>,
+    last_input_region: Option<(i32, i32, i32, i32, i32)>,
 
     loop_handle: smithay_client_toolkit::reexports::calloop::LoopHandle<'static, WaylandApp>,
     conn: Connection,
@@ -190,6 +192,8 @@ pub fn run_wayland(
         shell,
         configured: false,
         frame_pending: false,
+        has_mapped: false,
+        handled_summon: 0,
         needs_redraw: true,
         scale_factor: 1,
         width: SURFACE_WIDTH,
@@ -250,6 +254,8 @@ pub fn run_wayland(
             client.sync_layer_focus_and_region(true);
             client.needs_redraw = true;
         }
+
+        client.apply_summon();
 
         // Step physics & streaming frontier
         let now_inst = Instant::now();
@@ -312,6 +318,38 @@ fn create_xdg_fallback(
 }
 
 impl WaylandApp {
+    /// niri focuses a newly mapped OnDemand surface, not a mode change on an
+    /// already mapped one. Remap only for explicit summons, never for typing,
+    /// hover, streaming, or keyboard leave. The null + initial commit handshake
+    /// must complete before attaching another buffer.
+    fn apply_summon(&mut self) {
+        let generation = self.app.summon_generation;
+        if generation == self.handled_summon {
+            return;
+        }
+        self.handled_summon = generation;
+        if !self.app.visible || self.app.has_keyboard_focus || !self.has_mapped {
+            return;
+        }
+        if let ShellSurface::Layer(layer) = &self.shell {
+            self.configured = false;
+            self.frame_pending = false;
+            let surface = layer.wl_surface();
+            surface.attach(None, 0, 0);
+            surface.commit();
+            layer.set_layer(Layer::Top);
+            layer.set_anchor(Anchor::BOTTOM);
+            layer.set_exclusive_zone(-1);
+            layer.set_margin(0, 0, 14, 0);
+            layer.set_size(SURFACE_WIDTH, SURFACE_HEIGHT);
+            layer.set_keyboard_interactivity(KeyboardInteractivity::OnDemand);
+            self.current_kb_mode = KeyboardInteractivity::OnDemand;
+            self.last_input_region = None;
+            layer.commit();
+            self.needs_redraw = true;
+        }
+    }
+
     /// Synchronizes `zwlr_layer_surface_v1` keyboard interactivity (`OnDemand` vs `None`)
     /// and `wl_surface.set_input_region` (dynamic card hitbox mask) for zero `niri` hijacking.
     fn sync_layer_focus_and_region(&mut self, commit_if_changed: bool) -> bool {
@@ -337,16 +375,27 @@ impl WaylandApp {
                     (c.y + lift_y).floor() as i32,
                     c.w.ceil().max(1.0) as i32,
                     c.h.ceil().max(1.0) as i32,
+                    self.app.card_radius.value.round().max(0.0) as i32,
                 ))
             } else {
-                Some((0, 0, 0, 0))
+                Some((0, 0, 0, 0, 0))
             };
 
             if target_region != self.last_input_region {
                 if let Ok(region) = Region::new(&self.compositor) {
-                    if let Some((rx, ry, rw, rh)) = target_region {
+                    if let Some((rx, ry, rw, rh, radius)) = target_region {
                         if rw > 0 && rh > 0 {
-                            region.add(rx, ry, rw, rh);
+                            let r = radius.min(rw / 2).min(rh / 2);
+                            if rh > 2 * r { region.add(rx, ry + r, rw, rh - 2 * r); }
+                            for y in 0..r {
+                                let dy = r as f32 - y as f32 - 0.5;
+                                let inset = (r as f32 - ((r * r) as f32 - dy * dy).sqrt()).ceil() as i32;
+                                let width = rw - inset * 2;
+                                if width > 0 {
+                                    region.add(rx + inset, ry + y, width, 1);
+                                    region.add(rx + inset, ry + rh - y - 1, width, 1);
+                                }
+                            }
                         }
                     }
                     layer
@@ -420,6 +469,7 @@ impl WaylandApp {
 
     fn present_with_qh(&mut self, qh: &QueueHandle<Self>) {
         self.render_and_attach();
+        self.has_mapped = true;
         let wl_surf = self.shell.wl_surface();
         wl_surf.frame(qh, wl_surf.clone());
         self.frame_pending = true;
@@ -433,16 +483,13 @@ impl CompositorHandler for WaylandApp {
     fn scale_factor_changed(
         &mut self,
         _conn: &Connection,
-        qh: &QueueHandle<Self>,
+        _qh: &QueueHandle<Self>,
         surface: &wl_surface::WlSurface,
         new_factor: i32,
     ) {
         if surface == self.shell.wl_surface() {
             self.scale_factor = new_factor.clamp(1, 4);
             self.needs_redraw = true;
-            if self.configured && !self.frame_pending {
-                self.present_with_qh(qh);
-            }
         }
     }
 
@@ -505,7 +552,7 @@ impl LayerShellHandler for WaylandApp {
     fn configure(
         &mut self,
         _conn: &Connection,
-        qh: &QueueHandle<Self>,
+        _qh: &QueueHandle<Self>,
         _layer: &LayerSurface,
         configure: LayerSurfaceConfigure,
         _serial: u32,
@@ -521,7 +568,7 @@ impl LayerShellHandler for WaylandApp {
             configure.new_size.1
         };
         self.configured = true;
-        self.present_with_qh(qh);
+        self.needs_redraw = true;
     }
 }
 
@@ -533,7 +580,7 @@ impl WindowHandler for WaylandApp {
     fn configure(
         &mut self,
         _conn: &Connection,
-        qh: &QueueHandle<Self>,
+        _qh: &QueueHandle<Self>,
         _window: &Window,
         configure: WindowConfigure,
         _serial: u32,
@@ -549,7 +596,7 @@ impl WindowHandler for WaylandApp {
             .map(|v| v.get())
             .unwrap_or(SURFACE_HEIGHT);
         self.configured = true;
-        self.present_with_qh(qh);
+        self.needs_redraw = true;
     }
 }
 
@@ -630,7 +677,7 @@ impl KeyboardHandler for WaylandApp {
     fn enter(
         &mut self,
         _conn: &Connection,
-        qh: &QueueHandle<Self>,
+        _qh: &QueueHandle<Self>,
         _keyboard: &wl_keyboard::WlKeyboard,
         surface: &wl_surface::WlSurface,
         _serial: u32,
@@ -639,42 +686,32 @@ impl KeyboardHandler for WaylandApp {
     ) {
         if surface == self.shell.wl_surface() {
             self.app.has_keyboard_focus = true;
-            self.app.summon_focus_requested = false;
-            self.app.relinquish_focus_requested = false;
             self.app.last_cursor_activity = self.app.now_secs();
             self.sync_layer_focus_and_region(true);
             self.needs_redraw = true;
-            if self.configured && !self.frame_pending {
-                self.present_with_qh(qh);
-            }
         }
     }
 
     fn leave(
         &mut self,
         _conn: &Connection,
-        qh: &QueueHandle<Self>,
+        _qh: &QueueHandle<Self>,
         _keyboard: &wl_keyboard::WlKeyboard,
         surface: &wl_surface::WlSurface,
         _serial: u32,
     ) {
         if surface == self.shell.wl_surface() {
             self.app.has_keyboard_focus = false;
-            self.app.summon_focus_requested = false;
-            // Immediately drop back to `KeyboardInteractivity::None` so `niri` never steals
-            // keystrokes from underlying windows while `thetalk` remains visible on screen!
+            // Ownership ended. Keep click eligibility; do not request focus again.
             self.sync_layer_focus_and_region(true);
             self.needs_redraw = true;
-            if self.configured && !self.frame_pending {
-                self.present_with_qh(qh);
-            }
         }
     }
 
     fn press_key(
         &mut self,
         _conn: &Connection,
-        qh: &QueueHandle<Self>,
+        _qh: &QueueHandle<Self>,
         _keyboard: &wl_keyboard::WlKeyboard,
         _serial: u32,
         event: KeyEvent,
@@ -689,9 +726,6 @@ impl KeyboardHandler for WaylandApp {
         );
         self.sync_layer_focus_and_region(true);
         self.needs_redraw = true;
-        if self.configured && !self.frame_pending {
-            self.present_with_qh(qh);
-        }
     }
 
     fn release_key(
@@ -721,7 +755,7 @@ impl PointerHandler for WaylandApp {
     fn pointer_frame(
         &mut self,
         _conn: &Connection,
-        qh: &QueueHandle<Self>,
+        _qh: &QueueHandle<Self>,
         _pointer: &wl_pointer::WlPointer,
         events: &[PointerEvent],
     ) {
@@ -782,9 +816,6 @@ impl PointerHandler for WaylandApp {
 
         if dirty {
             self.needs_redraw = true;
-            if self.configured && !self.frame_pending {
-                self.present_with_qh(qh);
-            }
         }
     }
 }
