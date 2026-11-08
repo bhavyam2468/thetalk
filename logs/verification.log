@@ -1,6 +1,6 @@
 ==================================================================
  thetalk — Build, Render, Wayland/niri & AppImage Verification
- Timestamp (UTC): 2026-11-08T20:35:55Z
+ Timestamp (UTC): 2026-11-08T22:11:05Z
  Host: Linux 7.2.14-arch1-1 x86_64 GNU/Linux
 ==================================================================
 
@@ -12,31 +12,33 @@ XDG_CURRENT_DESKTOP=niri
 niri 26.04 (8ed0da4)
 
 ==> [2/7] Running Cargo Unit Tests
-    Finished `test` profile [optimized + debuginfo] target(s) in 0.03s
+    Finished `test` profile [optimized + debuginfo] target(s) in 0.07s
      Running unittests src/main.rs (target/debug/deps/thetalk-bbf268b1892670d7)
 
-running 14 tests
+running 16 tests
+test anim::tests::delayed_frame_uses_all_elapsed_time ... ok
+test anim::tests::contraction_starts_at_the_current_body ... ok
 test anim::tests::expressive_spring_has_subtle_mass_and_settles_cleanly ... ok
 test anim::tests::spring_frame_rate_invariance ... ok
 test llm::tests::normalizes_consecutive_same_role_turns ... ok
 test llm::tests::parses_openai_and_reasoning_sse_deltas ... ok
+test blur::tests::continuous_gaussian_blur_conserves_energy_and_spreads_smoothly ... ok
+test anim::tests::mid_flight_retarget_preserves_momentum ... ok
 test remend::tests::closes_unterminated_code_fence ... ok
-test remend::tests::closes_bold_and_italic_cleanly ... ok
 test remend::tests::heals_partial_markdown_link ... ok
-test remend::tests::hides_unclosed_highlight_until_complete ... ok
 test remend::tests::ignores_asterisks_inside_inline_code ... ok
+test remend::tests::hides_unclosed_highlight_until_complete ... ok
+test remend::tests::closes_bold_and_italic_cleanly ... ok
 test markdown::tests::parses_headings_lists_code_and_highlights ... ok
 test stream::tests::smooth_stream_reveals_whole_words_and_tracks_blur_frontier ... ok
-test blur::tests::continuous_gaussian_blur_conserves_energy_and_spreads_smoothly ... ok
 test stream::tests::splits_think_blocks_cleanly ... ok
-test anim::tests::mid_flight_retarget_preserves_momentum ... ok
 
-test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
 
 
 ==> [3/7] Building Release Binary
-    Finished `release` profile [optimized] target(s) in 0.03s
--rwxr-xr-x 2 thatguy thatguy 6.8M Nov  9 01:58 target/release/thetalk
+    Finished `release` profile [optimized] target(s) in 0.07s
+-rwxr-xr-x 2 thatguy thatguy 6.8M Nov  9 03:40 target/release/thetalk
 
 ==> [4/7] Running Built-in Runtime Self-Test
 thetalk self-test: OK (springs, remend, blur-to-focus frontier, cosmic-text Geist, tiny-skia)
@@ -46,18 +48,18 @@ rendered /home/thatguy/.gemini/antigravity/scratch/thetalk/assets/screenshots/01
 rendered /home/thatguy/.gemini/antigravity/scratch/thetalk/assets/screenshots/02-streaming-blur-focus.png
 rendered /home/thatguy/.gemini/antigravity/scratch/thetalk/assets/screenshots/03-markdown-light-paper.png
 rendered /home/thatguy/.gemini/antigravity/scratch/thetalk/assets/screenshots/04-settings-keyless.png
--rw-r--r-- 1 thatguy thatguy 205K Nov  9 02:05 /home/thatguy/.gemini/antigravity/scratch/thetalk/assets/screenshots/01-thin-bar.png
--rw-r--r-- 1 thatguy thatguy 1.4M Nov  9 02:05 /home/thatguy/.gemini/antigravity/scratch/thetalk/assets/screenshots/02-streaming-blur-focus.png
--rw-r--r-- 1 thatguy thatguy 1.5M Nov  9 02:05 /home/thatguy/.gemini/antigravity/scratch/thetalk/assets/screenshots/03-markdown-light-paper.png
--rw-r--r-- 1 thatguy thatguy 1.7M Nov  9 02:05 /home/thatguy/.gemini/antigravity/scratch/thetalk/assets/screenshots/04-settings-keyless.png
--rw-r--r-- 1 thatguy thatguy 2.3M Nov  9 02:04 /home/thatguy/.gemini/antigravity/scratch/thetalk/assets/screenshots/live-01-thin-bar.png
--rw-r--r-- 1 thatguy thatguy 2.3M Nov  9 02:04 /home/thatguy/.gemini/antigravity/scratch/thetalk/assets/screenshots/live-02-streaming-blur.png
--rw-r--r-- 1 thatguy thatguy 2.3M Nov  9 02:04 /home/thatguy/.gemini/antigravity/scratch/thetalk/assets/screenshots/live-03-expanded-markdown.png
--rw-r--r-- 1 thatguy thatguy 2.3M Nov  9 02:04 /home/thatguy/.gemini/antigravity/scratch/thetalk/assets/screenshots/live-04-settings.png
+-rw-r--r-- 1 thatguy thatguy 196K Nov  9 03:41 /home/thatguy/.gemini/antigravity/scratch/thetalk/assets/screenshots/01-thin-bar.png
+-rw-r--r-- 1 thatguy thatguy 1.3M Nov  9 03:41 /home/thatguy/.gemini/antigravity/scratch/thetalk/assets/screenshots/02-streaming-blur-focus.png
+-rw-r--r-- 1 thatguy thatguy 1.4M Nov  9 03:41 /home/thatguy/.gemini/antigravity/scratch/thetalk/assets/screenshots/03-markdown-light-paper.png
+-rw-r--r-- 1 thatguy thatguy 1.7M Nov  9 03:41 /home/thatguy/.gemini/antigravity/scratch/thetalk/assets/screenshots/04-settings-keyless.png
+-rw-r--r-- 1 thatguy thatguy 2.4M Nov  9 02:34 /home/thatguy/.gemini/antigravity/scratch/thetalk/assets/screenshots/live-01-thin-bar.png
+-rw-r--r-- 1 thatguy thatguy 2.3M Nov  9 02:34 /home/thatguy/.gemini/antigravity/scratch/thetalk/assets/screenshots/live-02-streaming-blur.png
+-rw-r--r-- 1 thatguy thatguy 2.3M Nov  9 02:34 /home/thatguy/.gemini/antigravity/scratch/thetalk/assets/screenshots/live-03-expanded-markdown.png
+-rw-r--r-- 1 thatguy thatguy 2.4M Nov  9 02:34 /home/thatguy/.gemini/antigravity/scratch/thetalk/assets/screenshots/live-04-settings.png
 
 ==> [6/7] Live Wayland / niri Compositor & Focus-Preservation Test
 Mock keyless LLM SSE server listening on http://127.0.0.1:18088/v1
-    niri focused-window before passive launch: {"id":37,"title":"GitHub Repository The Tal...","app_id":"antigravity","pid":103014,"workspace_id":1,"is_focused":true,"is_floating":false,"is_urgent":false,"layout":{"pos_in_scrolling_layout":[2,1],"tile_size":[1820.0,1134.2857142857144],"window_size":[1820,1134],"tile_pos_in_workspace_view":null,"window_offset_in_tile":[0.0,0.0]},"focus_timestamp":{"secs":21234,"nanos":908820055}}
+    niri focused-window before passive launch: null
     niri layer surfaces:
 Output "eDP-1":
   Background layer:
@@ -74,7 +76,7 @@ Output "eDP-1":
   Top layer:
     Surface:
       Namespace: "thetalk"
-      Keyboard interactivity: none
+      Keyboard interactivity: on-demand
 
     Surface:
       Namespace: "thetalk"
@@ -88,7 +90,7 @@ Output "eDP-1":
     Captured live Wayland screenshot -> /home/thatguy/.gemini/antigravity/scratch/thetalk/assets/screenshots/live-01-thin-bar.png
 [mock-llm] "POST /v1/chat/completions HTTP/1.1" 200 -
     Captured live Wayland screenshot -> /home/thatguy/.gemini/antigravity/scratch/thetalk/assets/screenshots/live-02-streaming-blur.png
-    niri focused-window during passive streaming: {"id":37,"title":"GitHub Repository The Tal...","app_id":"antigravity","pid":103014,"workspace_id":1,"is_focused":true,"is_floating":false,"is_urgent":false,"layout":{"pos_in_scrolling_layout":[2,1],"tile_size":[1820.0,1134.2857142857144],"window_size":[1820,1134],"tile_pos_in_workspace_view":null,"window_offset_in_tile":[0.0,0.0]},"focus_timestamp":{"secs":21234,"nanos":908820055}}
+    niri focused-window during passive streaming: {"id":42,"title":"llama-server -m ~/models/alibaba/qwen/qwen3-5-9b.gguf --host 127.0.0.1 --port 8080 -ngl 99","app_id":"kitty","pid":121093,"workspace_id":1,"is_focused":true,"is_floating":false,"is_urgent":false,"layout":{"pos_in_scrolling_layout":[2,1],"tile_size":[907.8571428571428,1134.2857142857144],"window_size":[908,1134],"tile_pos_in_workspace_view":null,"window_offset_in_tile":[0.0,0.0]},"focus_timestamp":{"secs":26982,"nanos":379751666}}
     [PASS] Underlying niri window retained keyboard focus during live overlay streaming!
     Captured live Wayland screenshot -> /home/thatguy/.gemini/antigravity/scratch/thetalk/assets/screenshots/live-03-expanded-markdown.png
 [mock-llm] "GET /v1/models HTTP/1.1" 200 -
@@ -96,15 +98,15 @@ Output "eDP-1":
 
 ==> [7/7] Building & Smoke-Testing Portable AppImage
 ==> [1/4] Building release binary (thetalk)...
-    Finished `release` profile [optimized] target(s) in 0.03s
+    Finished `release` profile [optimized] target(s) in 0.07s
 ==> [2/4] Staging AppDir...
 ==> [3/4] Resolving appimagetool (x86_64)...
 ==> [4/4] Generating AppImage...
 appimagetool, continuous build (git version 11d54c9), build 370 built on 2026-11-06 00:47:16 UTC
-/tmp/thetalk-appdir.4EEKAf/thetalk.AppDir/thetalk.desktop: hint: value "Utility;Network;Chat;Development;" for key "Categories" in group "Desktop Entry" contains more than one main category; application might appear more than once in the application menu
-/tmp/thetalk-appdir.4EEKAf/thetalk.AppDir/thetalk.desktop: hint: value "Utility;Network;Chat;Development;" for key "Categories" in group "Desktop Entry" contains more than one main category; application might appear more than once in the application menu
+/tmp/thetalk-appdir.kaWYOD/thetalk.AppDir/thetalk.desktop: hint: value "Utility;Network;Chat;Development;" for key "Categories" in group "Desktop Entry" contains more than one main category; application might appear more than once in the application menu
+/tmp/thetalk-appdir.kaWYOD/thetalk.AppDir/thetalk.desktop: hint: value "Utility;Network;Chat;Development;" for key "Categories" in group "Desktop Entry" contains more than one main category; application might appear more than once in the application menu
 Using architecture x86_64
-/tmp/thetalk-appdir.4EEKAf/thetalk.AppDir should be packaged as /home/thatguy/.gemini/antigravity/scratch/thetalk/releases/thetalk-x86_64.AppImage
+/tmp/thetalk-appdir.kaWYOD/thetalk.AppDir should be packaged as /home/thatguy/.gemini/antigravity/scratch/thetalk/releases/thetalk-x86_64.AppImage
 Generating squashfs...
 Downloading runtime file from https://github.com/AppImage/type2-runtime/releases/download/continuous/runtime-x86_64
 Downloaded runtime binary of size 944632
@@ -116,10 +118,10 @@ Exportable Squashfs 4.0 filesystem, zstd compressed, data block size 131072
 	compressed data, compressed metadata, compressed fragments,
 	compressed xattrs, compressed ids
 	duplicates are removed
-Filesystem size 3017.15 Kbytes (2.95 Mbytes)
-	41.22% of uncompressed filesystem size (7320.32 Kbytes)
-Inode table size 365 bytes (0.36 Kbytes)
-	43.35% of uncompressed inode table size (842 bytes)
+Filesystem size 3017.23 Kbytes (2.95 Mbytes)
+	41.22% of uncompressed filesystem size (7320.50 Kbytes)
+Inode table size 366 bytes (0.36 Kbytes)
+	43.47% of uncompressed inode table size (842 bytes)
 Directory table size 254 bytes (0.25 Kbytes)
 	60.91% of uncompressed directory table size (417 bytes)
 Number of duplicate files found 3
@@ -156,3 +158,6 @@ thetalk self-test: OK (springs, remend, blur-to-focus frontier, cosmic-text Geis
  - Screenshots: assets/screenshots/
  - Log file:    logs/verification.log
 ==================================================================
+
+==> [Extra] Live Keyless Completion Against Local llama-server (127.0.0.1:8080)
+{"choices":[{"finish_reason":"length","index":0,"message":{"role":"assistant","content":"","reasoning_content":"Thinking Process:\n1.  **Analyze"}}],"created":1794175902,"model":"/home/thatguy/models/alibaba/qwen/qwen3-5-9b.gguf","system_fingerprint":"b11429-d812350493","object":"chat.completion","usage":{"completion_tokens":10,"prompt_tokens":19,"total_tokens":29,"prompt_tokens_details":{"cached_tokens":0}},"id":"chatcmpl-lOQAFgpNO2erb71oIiBdipuG1zoHOszh","timings":{"cache_n":0,"prompt_n":19,"prompt_ms":95.039,"prompt_per_token_ms":5.002052631578947,"prompt_per_second":199.91792842938162,"predicted_n":10,"predicted_ms":198.637,"predicted_per_token_ms":22.070777777777778,"predicted_per_second":45.30877933114173}}
