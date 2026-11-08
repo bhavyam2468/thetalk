@@ -422,3 +422,17 @@ mod tests {
         assert!(state_last.sigma_logical > 2.0 && state_last.opacity > 0.25);
     }
 }
+
+#[cfg(test)]
+mod reasoning_regressions {
+    use super::*;
+    #[test]
+    fn reasoning_frontier_expires_and_is_bounded() {
+        let mut stream = SmoothStream::new();
+        stream.update_raw(&format!("<think>{}", "step ".repeat(100)), true, 1.0);
+        assert!(!stream.reasoning_frontier.is_empty());
+        assert!(stream.reasoning_frontier.len() <= MAX_FRONTIER_WORDS);
+        stream.tick(0.25, 1.25);
+        assert!(stream.reasoning_frontier.is_empty());
+    }
+}

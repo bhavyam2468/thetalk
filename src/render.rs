@@ -357,6 +357,15 @@ impl Renderer {
                 );
             }
 
+            state.hit_zones.retain_mut(|zone| {
+                let x0 = zone.rect.x.max(above_clip.x0 as f32 / scale);
+                let y0 = zone.rect.y.max(above_clip.y0 as f32 / scale);
+                let x1 = (zone.rect.x + zone.rect.w).min(above_clip.x1 as f32 / scale);
+                let y1 = (zone.rect.y + zone.rect.h).min(above_clip.y1 as f32 / scale);
+                zone.rect = LogicalRect::new(x0, y0, (x1 - x0).max(0.0), (y1 - y0).max(0.0));
+                x1 > x0 && y1 > y0
+            });
+
             // Every route uses the same outgoing-content retention. Reversals
             // capture the currently composited scene, not a hard-coded source.
             self.retain_panel(card, composer_top, 1.0 - panel_progress);
@@ -1130,7 +1139,11 @@ impl Renderer {
             alpha_mul: ctx.alpha_mul,
         };
 
-        let tx = box_rect.x + 11.0;
+        let caret_x = fbuf.layout_runs().next().map(|run|
+            glyph_x_for_byte(run.glyphs, display_field.cursor)).unwrap_or(0.0);
+        let text_room = (box_rect.w - 22.0 - right_reserve).max(20.0);
+        let offset = if focused { (caret_x - text_room + 3.0).max(0.0) } else { 0.0 };
+        let tx = box_rect.x + 11.0 - offset;
         let ty = box_rect.y + 7.5;
         if focused {
             self.draw_field_selection_and_cursor(
@@ -1780,7 +1793,7 @@ impl Renderer {
                                 &[],
                                 None,
                                 state,
-                                mctx,
+                                cell_context(mctx, pad_x + 8.0, (inner_w - 90.0).max(20.0)),
                             );
                         }
 
@@ -1886,7 +1899,7 @@ impl Renderer {
                                 &frontier_states,
                                 Some(*msg_idx),
                                 state,
-                                table_ctx,
+                                cell_context(table_ctx, cx, col_widths[c]),
                             );
                             cx += col_widths.get(c).copied().unwrap_or(80.0);
                         }
@@ -1897,7 +1910,7 @@ impl Renderer {
                                 ry,
                                 inner_w - 2.0,
                                 1.0,
-                                theme.line.with_alpha(mctx.alpha_mul),
+                                theme.line.with_alpha(mctx.alpha_mul * row_focus_opacity(row_bufs, &frontier_states)),
                                 true,
                             );
                             let mut rcx = pad_x - offset;
@@ -1909,7 +1922,7 @@ impl Renderer {
                                     &frontier_states,
                                     Some(*msg_idx),
                                     state,
-                                    table_ctx,
+                                    cell_context(table_ctx, rcx, col_widths[c]),
                                 );
                                 rcx += col_widths.get(c).copied().unwrap_or(80.0);
                             }
@@ -2109,6 +2122,12 @@ impl Renderer {
         state: &mut AppState,
         ctx: DrawContext,
     ) {
+        let decorated = buffer.layout_runs().any(|run| run.glyphs.iter().any(|g| g.metadata & 0xFF != 0));
+        let saved_mask = if decorated {
+            let saved = self.mask.clone();
+            self.restrict_mask(ctx.clip);
+            Some(saved)
+        } else { None };
         let scale = ctx.scale;
         let theme = state.theme;
         let pw = self.pixmap.width();
@@ -2222,6 +2241,7 @@ impl Renderer {
                     idx += 1;
                     while idx < glyphs.len()
                         && unpack_frontier_idx(glyphs[idx].metadata) == target_meta_f
+                        && glyphs[idx].color_opt == g.color_opt
                     {
                         idx += 1;
                     }
@@ -2275,6 +2295,7 @@ impl Renderer {
                 }
             }
         }
+        if let Some(mask) = saved_mask { self.mask = mask; }
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -2496,6 +2517,8 @@ impl Renderer {
         idle_secs: f64,
         ctx: DrawContext,
     ) {
+        let saved_mask = self.mask.clone();
+        self.restrict_mask(ctx.clip);
         let sel = field.selection_range();
         let (cursor_line, cursor_col_bytes) = byte_offset_to_line_col(&field.text, field.cursor);
         let sel_lines = sel.map(|(a, b)| {
@@ -2580,6 +2603,7 @@ impl Renderer {
                 true,
             );
         }
+        self.mask = saved_mask;
     }
 
     fn fill_rect_logical(
@@ -2750,6 +2774,9 @@ impl Renderer {
         // 1. Minimalist Thin Floating Bar (zero placeholders, zero tooltips)
         {
             let mut st = AppState::new(AppConfig::default());
+            renderer.panel_transition = PanelTransition::new();
+            renderer.previous_panel = None;
+            renderer.outgoing_panel = None;
             st.has_keyboard_focus = true;
             for _ in 0..90 {
                 st.tick(1.0 / 120.0);
@@ -2763,6 +2790,9 @@ impl Renderer {
         // 2. Active Streaming Blur-to-Focus Frontier
         {
             let mut st = AppState::new(AppConfig::default());
+            renderer.panel_transition = PanelTransition::new();
+            renderer.previous_panel = None;
+            renderer.outgoing_panel = None;
             st.has_keyboard_focus = false;
             st.messages.push(ChatItem::new_user(
                 "Explain why niri layer-shell overlays usually steal focus.".to_string(),
@@ -2791,6 +2821,9 @@ impl Renderer {
             let mut cfg = AppConfig::default();
             cfg.theme = ThemeMode::Light;
             let mut st = AppState::new(cfg);
+            renderer.panel_transition = PanelTransition::new();
+            renderer.previous_panel = None;
+            renderer.outgoing_panel = None;
             st.messages.push(ChatItem::new_user(
                 "Show a minimal Rust example and checklist.".to_string(),
             ));
@@ -2814,6 +2847,9 @@ impl Renderer {
         // 4. Keyless-Capable Settings Panel
         {
             let mut st = AppState::new(AppConfig::default());
+            renderer.panel_transition = PanelTransition::new();
+            renderer.previous_panel = None;
+            renderer.outgoing_panel = None;
             st.has_keyboard_focus = true;
             st.open_settings();
             st.loading_models = false;
@@ -2939,4 +2975,87 @@ fn reasoning_spans(text: &str, frontier: &[crate::stream::FrontierWord], color: 
         spans.push(RichSpan { text: text[offset..].into(), bold: false, italic: false, monospace: false, color, meta: 0 });
     }
     spans
+}
+
+fn cell_context(ctx: DrawContext, x: f32, width: f32) -> DrawContext {
+    DrawContext { clip: ctx.clip.intersect(ClipBox {
+        x0: ((x + 4.0) * ctx.scale).ceil() as i32,
+        x1: ((x + width - 4.0) * ctx.scale).floor() as i32,
+        ..ctx.clip
+    }), ..ctx }
+}
+
+fn row_focus_opacity(buffers: &[Buffer], states: &[WordFocusState]) -> f32 {
+    buffers.iter().flat_map(|buffer| buffer.layout_runs())
+        .flat_map(|run| run.glyphs.iter())
+        .filter_map(|glyph| unpack_frontier_idx(glyph.metadata).and_then(|i| states.get(i)))
+        .map(|state| 0.35 + 0.65 * state.opacity).fold(1.0, f32::min)
+}
+
+#[cfg(test)]
+mod rendering_regressions {
+    use super::*;
+
+    fn app() -> AppState {
+        let mut config = AppConfig::default();
+        config.model = "test-no-network".into();
+        AppState::new(config)
+    }
+
+    #[test]
+    fn vector_borders_and_fills_obey_the_same_viewport() {
+        let mut renderer = Renderer::new(1.0);
+        renderer.mask.data_mut().fill(255);
+        let clip = ClipBox { x0: 20, y0: 25, x1: 90, y1: 75 };
+        renderer.restrict_mask(clip);
+        renderer.fill_rrect_logical(0.0, 0.0, 150.0, 150.0, 12.0, Rgba::hex(0xffffff), true);
+        renderer.stroke_rrect_logical(10.0, 10.0, 100.0, 100.0, 8.0, 2.0, Rgba::hex(0xffffff));
+        for (i, pixel) in renderer.pixmap.data().chunks_exact(4).enumerate() {
+            let x = i % renderer.pixmap.width() as usize;
+            let y = i / renderer.pixmap.width() as usize;
+            if x < 20 || x >= 90 || y < 25 || y >= 75 { assert_eq!(pixel[3], 0); }
+        }
+    }
+
+    #[test]
+    fn unchanged_layout_is_shared_but_width_invalidates_it() {
+        let mut renderer = Renderer::new(1.0);
+        let mut app = app();
+        app.messages.push(ChatItem::new_user("Cache this paragraph.".into()));
+        let theme = app.theme;
+        let first = renderer.cached_message(&app.messages[0], 0, 600.0, 0.0, &theme, None);
+        let second = renderer.cached_message(&app.messages[0], 0, 600.0, 0.2, &theme, None);
+        assert!(Rc::ptr_eq(&first, &second));
+        let resized = renderer.cached_message(&app.messages[0], 0, 400.0, 0.2, &theme, None);
+        assert!(!Rc::ptr_eq(&first, &resized));
+        assert_eq!(renderer.message_cache.len(), 1);
+    }
+
+    #[test]
+    fn code_is_unwrapped_and_wide_components_register_local_scroll() {
+        let mut renderer = Renderer::new(1.0);
+        let mut app = app();
+        let code = format!("```rust\nlet line = \"{}\";\n```", "wide ".repeat(80));
+        let mut reply = ChatItem::new_assistant_streaming(0.0);
+        reply.stream = crate::stream::SmoothStream::from_completed(&code);
+        reply.streaming = false;
+        let scene = renderer.cached_message(&reply, 0, 500.0, 1.0, &app.theme, None);
+        match &scene.blocks[0] {
+            ShapedBlock::Code { code_buf, .. } => {
+                assert_eq!(code_buf.layout_runs().count(), 1);
+                assert!(measure_buffer_width(code_buf) > 500.0);
+            }
+            _ => panic!("expected code"),
+        }
+        renderer.mask.data_mut().fill(255);
+        let ctx = DrawContext { scale: 1.0, alpha_mul: 1.0,
+            clip: ClipBox { x0: 0, y0: 0, x1: 500, y1: 300 } };
+        renderer.overflow_viewport(&mut app, (0, 0), LogicalRect::new(10.0, 10.0, 300.0, 100.0), 900.0, ctx);
+        app.pointer_pos = Some((30.0, 30.0));
+        app.scroll_input(80.0, 0.0, true, false);
+        assert_eq!(app.block_scroll[&(0,0)], 80.0);
+        app.scroll_input(0.0, 70.0, false, true);
+        assert_eq!(app.block_scroll[&(0,0)], 150.0);
+        assert_eq!(app.scroll_spring.target, 0.0);
+    }
 }

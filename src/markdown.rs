@@ -841,3 +841,22 @@ mod tests {
         assert!(matches!(doc.blocks[3], MdBlock::CodeBlock { .. }));
     }
 }
+
+#[cfg(test)]
+mod code_stream_regressions {
+    use super::*;
+    #[test]
+    fn fenced_syntax_keeps_frontier_metadata_and_unicode_text() {
+        let text = "```rust\nlet café = hello();\n```";
+        let start = text.find("hello").unwrap();
+        let word = FrontierWord { start, end: start + 5, birth_secs: 1.0 };
+        let doc = parse_markdown(text, true, &[word], 1.05, &Theme::for_mode(crate::theme::ThemeMode::Dark));
+        match &doc.blocks[0] {
+            MdBlock::CodeBlock { spans, raw_code, .. } => {
+                assert_eq!(spans.iter().map(|s| s.text.as_str()).collect::<String>(), *raw_code);
+                assert!(spans.iter().any(|s| s.text.contains("hello") && unpack_frontier_idx(s.meta) == Some(0)));
+            }
+            _ => panic!("expected fenced code"),
+        }
+    }
+}
