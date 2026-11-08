@@ -34,6 +34,9 @@ silently applied to Cargo.toml**.
    scale, and cache stationary geometry. Identical Gaussian slice endpoints are
    combined. Text/card edges remain native-resolution; optical word blur remains
    continuous Gaussian, not a CSS-like opacity replacement.
+   Outgoing panel composition also now uses tiny-skia's optimized premultiplied
+   pixmap pipeline rather than a scalar per-channel float/rounding loop. Optical
+   glyph placement scratch is reused instead of allocating per frontier word.
    Nine-patch atlases remain a candidate if measured shadow cost is still high.
    - https://github.com/linebender/tiny-skia
    - https://github.com/orktes/jsui/pull/111 (comparison, not our benchmark)

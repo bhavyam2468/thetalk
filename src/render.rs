@@ -43,6 +43,7 @@ pub struct Renderer {
     previous_panel: Option<PanelSnapshot>,
     outgoing_panel: Option<PanelSnapshot>,
     shadow_cache: Option<([u32; 7], Pixmap)>,
+    glyph_placements: Vec<(cosmic_text::CacheKey, i32, i32, u32, u32)>,
     message_cache: Vec<(usize, u64, Rc<ShapedMessage>)>,
 }
 
@@ -167,6 +168,7 @@ impl Renderer {
             outgoing_panel: None,
             message_cache: Vec::new(),
             shadow_cache: None,
+            glyph_placements: Vec::with_capacity(64),
         }
     }
 
@@ -434,24 +436,12 @@ impl Renderer {
         if let Some(old) = &self.outgoing_panel {
             let ox = (x0 + w / 2) as i32 - (old.width / 2) as i32;
             let oy = y1 as i32 - old.height as i32;
-            let mask = self.mask.data();
-            let dst = self.pixmap.data_mut();
-            for y in y0..y1 {
-                let sy = y as i32 - oy;
-                if sy < 0 || sy >= old.height as i32 { continue; }
-                for x in x0..x1 {
-                    let sx = x as i32 - ox;
-                    if sx < 0 || sx >= old.width as i32 { continue; }
-                    let pixel = y * pw + x;
-                    let k = outgoing_alpha * mask[pixel] as f32 / 255.0;
-                    let si = (sy as usize * old.width + sx as usize) * 4;
-                    let di = pixel * 4;
-                    let inv = 1.0 - old.pixels[si + 3] as f32 / 255.0 * k;
-                    for c in 0..4 {
-                        dst[di + c] = (old.pixels[si + c] as f32 * k
-                            + dst[di + c] as f32 * inv).round().clamp(0.0, 255.0) as u8;
-                    }
-                }
+            if let Some(source) = tiny_skia::PixmapRef::from_bytes(&old.pixels, old.width as u32, old.height as u32) {
+                // Use tiny-skia's optimized premultiplied raster pipeline instead
+                // of scalar float conversion/rounding for every RGBA channel.
+                self.pixmap.draw_pixmap(ox, oy, source, &tiny_skia::PixmapPaint {
+                    opacity: outgoing_alpha.clamp(0.0, 1.0), ..Default::default()
+                }, Transform::identity(), Some(&self.mask));
             }
         }
         let mut pixels = self.previous_panel.take().map(|p| p.pixels).unwrap_or_default();
@@ -2218,10 +2208,16 @@ impl Renderer {
                         if let (Some(msg_idx), Some(link_idx)) =
                             (msg_idx_opt, unpack_link_idx(meta))
                         {
-                            state.hit_zones.push(HitZone {
-                                rect: LogicalRect::new(start_x, pill_y, span_w, pill_h),
-                                target: HitTarget::LinkUrl { msg_idx, link_idx },
-                            });
+                            let x0 = start_x.max(ctx.clip.x0 as f32 / scale);
+                            let y0 = pill_y.max(ctx.clip.y0 as f32 / scale);
+                            let x1 = (start_x + span_w).min(ctx.clip.x1 as f32 / scale);
+                            let y1 = (pill_y + pill_h).min(ctx.clip.y1 as f32 / scale);
+                            if x1 > x0 && y1 > y0 {
+                                state.hit_zones.push(HitZone {
+                                    rect: LogicalRect::new(x0, y0, x1 - x0, y1 - y0),
+                                    target: HitTarget::LinkUrl { msg_idx, link_idx },
+                                });
+                            }
                         }
                     }
                     gi = gj;
@@ -2413,8 +2409,7 @@ impl Renderer {
         let mut min_y = i32::MAX;
         let mut max_x = i32::MIN;
         let mut max_y = i32::MIN;
-        let mut placements: Vec<(cosmic_text::CacheKey, i32, i32, u32, u32)> =
-            Vec::with_capacity(group.len());
+        self.glyph_placements.clear();
 
         for g in group {
             let phys = g.physical((origin_x * self.scale, baseline_y * self.scale), self.scale);
@@ -2432,12 +2427,12 @@ impl Renderer {
                     min_y = min_y.min(gy);
                     max_x = max_x.max(gx + gw as i32);
                     max_y = max_y.max(gy + gh as i32);
-                    placements.push((phys.cache_key, gx, gy, gw, gh));
+                    self.glyph_placements.push((phys.cache_key, gx, gy, gw, gh));
                 }
             }
         }
 
-        if placements.is_empty() || max_x <= min_x || max_y <= min_y {
+        if self.glyph_placements.is_empty() || max_x <= min_x || max_y <= min_y {
             return;
         }
 
@@ -2453,7 +2448,7 @@ impl Renderer {
 
         {
             let src_mask = self.blur_scratch.prepare_mask(bw, bh);
-            for (ck, gx, gy, gw, gh) in placements {
+            for (ck, gx, gy, gw, gh) in self.glyph_placements.iter().copied() {
                 if let Some(img) = self
                     .swash_cache
                     .get_image(&mut self.font_system, ck)
