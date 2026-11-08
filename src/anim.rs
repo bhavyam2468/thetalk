@@ -242,6 +242,7 @@ impl RectSpring {
         self.h.retarget(r.h);
     }
 
+    #[allow(dead_code)]
     pub fn target(&self) -> LogicalRect {
         LogicalRect::new(self.x.target, self.y.target, self.w.target, self.h.target)
     }
