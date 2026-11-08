@@ -1,0 +1,20 @@
+#!/usr/bin/env sh
+set -eu
+
+SELF_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+export APPDIR="${APPDIR:-$SELF_DIR}"
+
+if [ -d "$APPDIR/usr/lib" ]; then
+    export LD_LIBRARY_PATH="${LD_LIBRARY_PATH:+$LD_LIBRARY_PATH:}$APPDIR/usr/lib"
+fi
+
+if [ -z "${XKB_CONFIG_ROOT:-}" ]; then
+    for candidate in /usr/share/X11/xkb /usr/local/share/X11/xkb "$APPDIR/usr/share/X11/xkb"; do
+        if [ -d "$candidate" ]; then
+            export XKB_CONFIG_ROOT="$candidate"
+            break
+        fi
+    done
+fi
+
+exec "$APPDIR/usr/bin/thetalk" "$@"

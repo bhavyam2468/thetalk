@@ -1,0 +1,8 @@
+/target/
+/.cache/
+/dist/*.AppDir/
+/dist/appimagetool*
+__pycache__/
+*.pyc
+*.swp
+.DS_Store

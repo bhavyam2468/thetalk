@@ -1,0 +1,32 @@
+[package]
+name = "thetalk"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+description = "Native Linux Wayland layer-shell local LLM chat bar — Quiet Paper UI + Material 3 Expressive spring motion"
+license = "MIT"
+repository = "https://github.com/bhavyam2468/thetalk"
+
+[[bin]]
+name = "thetalk"
+path = "src/main.rs"
+
+[dependencies]
+smithay-client-toolkit = "0.19.2"
+tiny-skia = "0.11.4"
+cosmic-text = { version = "0.14.2", features = ["shape-run-cache", "monospace_fallback"] }
+pulldown-cmark = { version = "0.12.2", default-features = false }
+ureq = { version = "2.10.1", default-features = false, features = ["tls", "native-certs", "json", "gzip"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+libc = "0.2"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = "symbols"
+panic = "abort"
+
+[profile.dev]
+opt-level = 1

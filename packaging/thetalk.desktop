@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=thetalk
+GenericName=Local LLM Overlay
+Comment=Minimalist Wayland layer-shell local LLM chat bar for niri
+Exec=thetalk toggle
+Icon=thetalk
+Terminal=false
+Categories=Utility;Development;Chat;
+Keywords=llm;ai;chat;wayland;niri;ollama;
+StartupNotify=false
