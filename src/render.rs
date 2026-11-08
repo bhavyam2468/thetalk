@@ -2439,6 +2439,14 @@ impl Renderer {
         let word_w = (max_x - min_x) as usize;
         let word_h = (max_y - min_y) as usize;
         if word_w > 2048 || word_h > 512 {
+            // Long unbroken code/identifiers must not vanish just because the
+            // optical scratch budget is exceeded. Keep the gentle opacity pull
+            // with clipped crisp glyphs instead of allocating an enormous blur.
+            let pw = self.pixmap.width();
+            let ph = self.pixmap.height();
+            for glyph in group {
+                self.blit_single_glyph(glyph, origin_x, baseline_y, opacity, pw, ph, clip);
+            }
             return;
         }
 

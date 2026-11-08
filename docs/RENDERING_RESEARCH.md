@@ -57,7 +57,9 @@ silently applied to Cargo.toml**.
    offset iterator provides source ranges. Our code highlighter replaced those
    ranges with metadata=0, bypassing the optical pipeline. Code-local projected
    frontier offsets now split highlighted spans without discarding syntax colour
-   or Unicode. Optical glyph groups also split when their colour changes. Table
+   or Unicode. Optical glyph groups also split when their colour changes.
+   Oversized unbroken identifiers exceed the blur scratch budget gracefully:
+   clipped opacity-only glyphs replace the old early-return that hid the text. Table
    cells already carry source metadata; row separators now use the row's focus
    opacity instead of appearing at full contrast immediately.
    - https://github.com/pulldown-cmark/pulldown-cmark
