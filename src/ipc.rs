@@ -126,6 +126,7 @@ struct PendingClient {
 impl PendingClient {
     fn poll(&mut self, commands: &mut Vec<IpcCommand>) -> bool {
         if self.started.elapsed() > Duration::from_secs(2) { return false; }
+        if commands.len() >= 128 { return true; }
         let mut buf = [0_u8; 4096];
         let eof = match self.stream.read(&mut buf) {
             Ok(0) => true,
@@ -141,10 +142,11 @@ impl PendingClient {
                     if let Some(cmd) = IpcCommand::from_wire(line) { commands.push(cmd); }
                 }
                 consumed = i + 1;
+                if commands.len() >= 128 { break; }
             }
         }
         self.data.drain(..consumed);
-        !eof
+        !eof || !self.data.is_empty()
     }
 }
 

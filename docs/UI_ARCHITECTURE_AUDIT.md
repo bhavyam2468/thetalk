@@ -23,7 +23,7 @@
 
 ## niri research
 
-Reviewed upstream source via GitHub, not an assumption about generic Wayland:
+Reviewed upstream source via GitHub at `90d5c1bf7381a81c953cb8b3f26c5ddcaa3f48cb`, not an assumption about generic Wayland:
 
 - https://github.com/YaLTeR/niri/blob/main/src/handlers/layer_shell.rs
   (`was_unmapped && on_demand` initial focus, and null-buffer unmapping/initial configure).
