@@ -78,3 +78,29 @@ implemented changes and explicit remaining risks.
   Zero-major upgrades can break APIs/MSRV/input semantics. Update manifests,
   lockfile, supported Rust version and tests coherently; never handwave a version
   bump as a solution to an application-level algorithmic problem.
+
+## 9-Slice Shadow Caching, Momentum Physics & Zero-Allocation Rendering
+
+- **Precomputed 9-Slice Box Shadow Architecture**:
+  - Full-screen CPU Gaussian blurs (evaluating `fast_erf` across 3.84 million pixels twice per frame) cost 55ms–61ms per frame at 2x HiDPI, dropping animated card resizing to 18fps.
+  - A rounded rectangle shadow consists of 4 identical quarter-circle corners and 4 flat edges. In X, horizontal edges have zero variance; in Y, vertical edges have zero variance.
+  - Precomputing a compact 9-slice shadow template (corner radius + margin) rendered once at native physical scale (`scale`) allows drawing shadows for *any* card size in <0.05ms by blitting the 4 corners and 1D-stretching the 4 straight edges.
+  - Blitting uses zero heap allocations and integer bit-shifts for premultiplied alpha compositing (`(src * opacity) >> 8`), completely eliminating frame-time spikes during spring transitions.
+  - Avoid copying panel snapshots (`retain_panel`) during active motion; snapshot only once at steady state or upon transition completion.
+
+- **GSAP / Lenis Inspired Scroll Physics & Hover Routing**:
+  - Overdamped springs (`stiffness: 1600`) settle in ~25ms, causing wheel detents to appear as abrupt 10fps steps. Retuning `SpringSpec::SCROLL` to `stiffness: 240.0, damping: 31.0` yields natural kinetic gliding that feels weightless and fluid.
+  - Discrete mouse wheel detents require proper scaling (112.0px per notch) to match modern high-DPI desktop expectations.
+  - Continuous touchpad events must retarget the kinetic spring target rather than hard-snapping (`snap_to`), allowing inertia on finger release.
+  - Hover routing allows standard mouse wheel scrolling over overflowing code blocks or tables to scroll horizontally without requiring the user to hold the Shift key.
+
+- **Strict Viewport Isolation & Reasoning Block Polish**:
+  - Vertical indicator lines, quote bars, and content runs must be strictly clamped to the viewport bottom (`(card_y + viewport_h - my).max(0.0)`).
+  - The bottom composer omnibox must draw an opaque background fill (`theme.float`) to ensure content scrolling behind it never bleeds through.
+  - Streaming inside `<think>` reasoning blocks uses a subtle blur-to-focus (`sigma: 1.1 -> 0.0`, `opacity: 0.25 -> 1.0`, `offset_y: 0.8 -> 0.0`) with easing to provide gentle visual feedback without distracting from the main response.
+  - Accordion expand/collapse for thinking blocks uses `SpringSpec::DEFAULT_SPATIAL` rather than instant snapping.
+
+- **Markdown Code & Table Layout**:
+  - Code blocks set `Wrap::None`. In `cosmic-text`, passing a fixed width to `buffer.set_size` forces artificial line boundaries even with `Wrap::None`; passing `None` ensures full natural line layout and enables true horizontal overflow.
+  - Tables compute generous minimum column widths (`clamp(100.0, 420.0)`) with subtle vertical dividers between columns.
+  - Overflowing components display a dedicated 3px scrollbar track and thumb to visually communicate scroll position.

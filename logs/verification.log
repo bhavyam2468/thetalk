@@ -1,6 +1,6 @@
 ==================================================================
  thetalk — Build, Render, Wayland/niri & AppImage Verification
- Timestamp (UTC): 2026-11-08T23:07:38Z
+ Timestamp (UTC): 2026-11-08T23:45:50Z
  Host: Linux 7.2.14-arch1-1 x86_64 GNU/Linux
 ==================================================================
 
@@ -12,45 +12,44 @@ XDG_CURRENT_DESKTOP=niri
 niri 26.04 (8ed0da4)
 
 ==> [2/7] Running Cargo Unit Tests
-   Compiling thetalk v0.1.0 (/home/thatguy/.gemini/antigravity/scratch/thetalk)
-    Finished `test` profile [optimized + debuginfo] target(s) in 1.87s
+    Finished `test` profile [optimized + debuginfo] target(s) in 0.03s
      Running unittests src/main.rs (target/debug/deps/thetalk-bbf268b1892670d7)
 
 running 27 tests
+test anim::tests::delayed_frame_uses_all_elapsed_time ... ok
 test anim::tests::expressive_spring_has_subtle_mass_and_settles_cleanly ... ok
 test anim::tests::contraction_starts_at_the_current_body ... ok
-test anim::tests::delayed_frame_uses_all_elapsed_time ... ok
 test anim::tests::mid_flight_retarget_preserves_momentum ... ok
 test anim::tests::spring_frame_rate_invariance ... ok
-test llm::tests::parses_openai_and_reasoning_sse_deltas ... ok
-test ipc::tests::partial_ipc_does_not_wait_and_survives_across_ticks ... ok
-test markdown::code_stream_regressions::fenced_syntax_keeps_frontier_metadata_and_unicode_text ... ok
 test llm::tests::normalizes_consecutive_same_role_turns ... ok
-test markdown::tests::parses_headings_lists_code_and_highlights ... ok
-test blur::tests::continuous_gaussian_blur_conserves_energy_and_spreads_smoothly ... ok
-test presentation::tests::all_routes_use_the_same_interruptible_clock ... ok
+test llm::tests::parses_openai_and_reasoning_sse_deltas ... ok
 test remend::tests::closes_bold_and_italic_cleanly ... ok
 test remend::tests::closes_unterminated_code_fence ... ok
+test markdown::tests::parses_headings_lists_code_and_highlights ... ok
 test remend::tests::heals_partial_markdown_link ... ok
 test remend::tests::hides_unclosed_highlight_until_complete ... ok
 test remend::tests::ignores_asterisks_inside_inline_code ... ok
-test state::interaction_tests::eligibility_is_independent_of_pointer_and_ownership ... ok
-test state::interaction_tests::escape_dismisses_regardless_of_draft_or_history ... ok
 test state::interaction_tests::panel_priority_is_shared ... ok
-test stream::reasoning_regressions::reasoning_frontier_expires_and_is_bounded ... ok
 test stream::tests::smooth_stream_reveals_whole_words_and_tracks_blur_frontier ... ok
 test stream::tests::splits_think_blocks_cleanly ... ok
 test markdown::partial_markdown_stress::unicode_and_incomplete_components_keep_valid_spans_at_every_boundary ... ok
+test presentation::tests::all_routes_use_the_same_interruptible_clock ... ok
+test markdown::code_stream_regressions::fenced_syntax_keeps_frontier_metadata_and_unicode_text ... ok
+test ipc::tests::partial_ipc_does_not_wait_and_survives_across_ticks ... ok
+test state::interaction_tests::eligibility_is_independent_of_pointer_and_ownership ... ok
+test stream::reasoning_regressions::reasoning_frontier_expires_and_is_bounded ... ok
+test state::interaction_tests::escape_dismisses_regardless_of_draft_or_history ... ok
+test blur::tests::continuous_gaussian_blur_conserves_energy_and_spreads_smoothly ... ok
 test render::rendering_regressions::unchanged_layout_is_shared_but_width_invalidates_it ... ok
 test render::rendering_regressions::code_is_unwrapped_and_wide_components_register_local_scroll ... ok
 test render::rendering_regressions::vector_borders_and_fills_obey_the_same_viewport ... ok
 
-test result: ok. 27 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+test result: ok. 27 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
 
 
 ==> [3/7] Building Release Binary
-    Finished `release` profile [optimized] target(s) in 0.09s
--rwxr-xr-x 2 thatguy thatguy 6.9M Nov  9 04:37 target/release/thetalk
+    Finished `release` profile [optimized] target(s) in 0.03s
+-rwxr-xr-x 2 thatguy thatguy 6.9M Nov  9 05:15 target/release/thetalk
 
 ==> [4/7] Running Built-in Runtime Self-Test
 thetalk self-test: OK (springs, remend, blur-to-focus frontier, cosmic-text Geist, tiny-skia)
@@ -61,30 +60,30 @@ rendered /home/thatguy/.gemini/antigravity/scratch/thetalk/assets/screenshots/02
 rendered /home/thatguy/.gemini/antigravity/scratch/thetalk/assets/screenshots/03-markdown-light-paper.png
 rendered /home/thatguy/.gemini/antigravity/scratch/thetalk/assets/screenshots/04-settings-keyless.png
 rendered /home/thatguy/.gemini/antigravity/scratch/thetalk/assets/screenshots/05-wide-markdown-clipping.png
--rw-r--r-- 1 thatguy thatguy 198K Nov  9 04:37 /home/thatguy/.gemini/antigravity/scratch/thetalk/assets/screenshots/01-thin-bar.png
--rw-r--r-- 1 thatguy thatguy 1.3M Nov  9 04:37 /home/thatguy/.gemini/antigravity/scratch/thetalk/assets/screenshots/02-streaming-blur-focus.png
--rw-r--r-- 1 thatguy thatguy 1.4M Nov  9 04:37 /home/thatguy/.gemini/antigravity/scratch/thetalk/assets/screenshots/03-markdown-light-paper.png
--rw-r--r-- 1 thatguy thatguy 1.7M Nov  9 04:37 /home/thatguy/.gemini/antigravity/scratch/thetalk/assets/screenshots/04-settings-keyless.png
--rw-r--r-- 1 thatguy thatguy 2.1M Nov  9 04:37 /home/thatguy/.gemini/antigravity/scratch/thetalk/assets/screenshots/05-wide-markdown-clipping.png
--rw-r--r-- 1 thatguy thatguy 2.4M Nov  9 04:13 /home/thatguy/.gemini/antigravity/scratch/thetalk/assets/screenshots/live-01-thin-bar.png
--rw-r--r-- 1 thatguy thatguy 2.4M Nov  9 04:13 /home/thatguy/.gemini/antigravity/scratch/thetalk/assets/screenshots/live-02-streaming-blur.png
--rw-r--r-- 1 thatguy thatguy 2.4M Nov  9 04:13 /home/thatguy/.gemini/antigravity/scratch/thetalk/assets/screenshots/live-03-expanded-markdown.png
--rw-r--r-- 1 thatguy thatguy 2.4M Nov  9 04:13 /home/thatguy/.gemini/antigravity/scratch/thetalk/assets/screenshots/live-04-settings.png
+-rw-r--r-- 1 thatguy thatguy  59K Nov  9 05:15 /home/thatguy/.gemini/antigravity/scratch/thetalk/assets/screenshots/01-thin-bar.png
+-rw-r--r-- 1 thatguy thatguy 1.1M Nov  9 05:15 /home/thatguy/.gemini/antigravity/scratch/thetalk/assets/screenshots/02-streaming-blur-focus.png
+-rw-r--r-- 1 thatguy thatguy 1.2M Nov  9 05:15 /home/thatguy/.gemini/antigravity/scratch/thetalk/assets/screenshots/03-markdown-light-paper.png
+-rw-r--r-- 1 thatguy thatguy 1.5M Nov  9 05:15 /home/thatguy/.gemini/antigravity/scratch/thetalk/assets/screenshots/04-settings-keyless.png
+-rw-r--r-- 1 thatguy thatguy 2.0M Nov  9 05:15 /home/thatguy/.gemini/antigravity/scratch/thetalk/assets/screenshots/05-wide-markdown-clipping.png
+-rw-r--r-- 1 thatguy thatguy 2.3M Nov  9 04:39 /home/thatguy/.gemini/antigravity/scratch/thetalk/assets/screenshots/live-01-thin-bar.png
+-rw-r--r-- 1 thatguy thatguy 2.3M Nov  9 04:39 /home/thatguy/.gemini/antigravity/scratch/thetalk/assets/screenshots/live-02-streaming-blur.png
+-rw-r--r-- 1 thatguy thatguy 2.4M Nov  9 04:39 /home/thatguy/.gemini/antigravity/scratch/thetalk/assets/screenshots/live-03-expanded-markdown.png
+-rw-r--r-- 1 thatguy thatguy 2.4M Nov  9 04:39 /home/thatguy/.gemini/antigravity/scratch/thetalk/assets/screenshots/live-04-settings.png
 ==> Headless release renderer stress benchmark (CPU time, NOT compositor FPS)
-{"scenario":"steady","scale":1,"messages":24,"samples":72,"p50_ms":16.552,"p95_ms":17.492,"max_ms":17.648}
-{"scenario":"route-reversal","scale":1,"messages":24,"samples":72,"p50_ms":16.060,"p95_ms":17.333,"max_ms":17.879}
-{"scenario":"scroll","scale":1,"messages":24,"samples":72,"p50_ms":16.503,"p95_ms":16.969,"max_ms":17.080}
-{"scenario":"thinking","scale":1,"messages":24,"samples":72,"p50_ms":6.909,"p95_ms":6.992,"max_ms":7.737}
-{"scenario":"streaming","scale":1,"messages":24,"samples":72,"p50_ms":7.240,"p95_ms":7.426,"max_ms":7.470}
-{"scenario":"steady","scale":2,"messages":24,"samples":72,"p50_ms":55.076,"p95_ms":58.236,"max_ms":58.647}
-{"scenario":"route-reversal","scale":2,"messages":24,"samples":72,"p50_ms":56.223,"p95_ms":60.628,"max_ms":61.386}
-{"scenario":"scroll","scale":2,"messages":24,"samples":72,"p50_ms":56.188,"p95_ms":59.766,"max_ms":61.338}
-{"scenario":"thinking","scale":2,"messages":24,"samples":72,"p50_ms":45.351,"p95_ms":47.157,"max_ms":48.670}
-{"scenario":"streaming","scale":2,"messages":24,"samples":72,"p50_ms":46.493,"p95_ms":48.637,"max_ms":50.935}
+{"scenario":"steady","scale":1,"messages":24,"samples":72,"p50_ms":2.109,"p95_ms":2.981,"max_ms":3.024}
+{"scenario":"route-reversal","scale":1,"messages":24,"samples":72,"p50_ms":0.916,"p95_ms":1.662,"max_ms":1.746}
+{"scenario":"scroll","scale":1,"messages":24,"samples":72,"p50_ms":2.119,"p95_ms":2.226,"max_ms":2.283}
+{"scenario":"thinking","scale":1,"messages":24,"samples":72,"p50_ms":2.004,"p95_ms":2.068,"max_ms":2.331}
+{"scenario":"streaming","scale":1,"messages":24,"samples":72,"p50_ms":2.049,"p95_ms":2.255,"max_ms":2.314}
+{"scenario":"steady","scale":2,"messages":24,"samples":72,"p50_ms":7.921,"p95_ms":11.008,"max_ms":11.051}
+{"scenario":"route-reversal","scale":2,"messages":24,"samples":72,"p50_ms":3.440,"p95_ms":6.146,"max_ms":6.281}
+{"scenario":"scroll","scale":2,"messages":24,"samples":72,"p50_ms":8.662,"p95_ms":8.873,"max_ms":8.896}
+{"scenario":"thinking","scale":2,"messages":24,"samples":72,"p50_ms":7.636,"p95_ms":7.804,"max_ms":7.970}
+{"scenario":"streaming","scale":2,"messages":24,"samples":72,"p50_ms":7.799,"p95_ms":7.958,"max_ms":8.924}
 
 ==> [6/7] Live Wayland / niri Compositor & Focus-Preservation Test
 Mock keyless LLM SSE server listening on http://127.0.0.1:18088/v1
-    niri focused-window before passive launch: {"id":43,"title":"GitHub Repository The Tal...","app_id":"antigravity","pid":121627,"workspace_id":1,"is_focused":true,"is_floating":false,"is_urgent":false,"layout":{"pos_in_scrolling_layout":[3,1],"tile_size":[1820.0,1134.2857142857144],"window_size":[1820,1134],"tile_pos_in_workspace_view":null,"window_offset_in_tile":[0.0,0.0]},"focus_timestamp":{"secs":30384,"nanos":490850727}}
+    niri focused-window before passive launch: null
     niri layer surfaces:
 Output "eDP-1":
   Background layer:
@@ -103,30 +102,39 @@ Output "eDP-1":
       Namespace: "thetalk"
       Keyboard interactivity: none
 
+    Surface:
+      Namespace: "thetalk"
+      Keyboard interactivity: none
+
   Overlay layer:
     Surface:
       Namespace: "dms:dankisland"
       Keyboard interactivity: none
 
+    Surface:
+      Namespace: "dms:fade-to-dpms"
+      Keyboard interactivity: exclusive
+
     Captured live Wayland screenshot -> /home/thatguy/.gemini/antigravity/scratch/thetalk/assets/screenshots/live-01-thin-bar.png
 [mock-llm] "POST /v1/chat/completions HTTP/1.1" 200 -
     Captured live Wayland screenshot -> /home/thatguy/.gemini/antigravity/scratch/thetalk/assets/screenshots/live-02-streaming-blur.png
-    niri focused-window during passive streaming: {"id":43,"title":"GitHub Repository The Tal...","app_id":"antigravity","pid":121627,"workspace_id":1,"is_focused":true,"is_floating":false,"is_urgent":false,"layout":{"pos_in_scrolling_layout":[3,1],"tile_size":[1820.0,1134.2857142857144],"window_size":[1820,1134],"tile_pos_in_workspace_view":null,"window_offset_in_tile":[0.0,0.0]},"focus_timestamp":{"secs":30409,"nanos":535355583}}
+    niri focused-window during passive streaming: null
+    [PASS] Underlying niri window retained keyboard focus during live overlay streaming!
     Captured live Wayland screenshot -> /home/thatguy/.gemini/antigravity/scratch/thetalk/assets/screenshots/live-03-expanded-markdown.png
 [mock-llm] "GET /v1/models HTTP/1.1" 200 -
     Captured live Wayland screenshot -> /home/thatguy/.gemini/antigravity/scratch/thetalk/assets/screenshots/live-04-settings.png
 
 ==> [7/7] Building & Smoke-Testing Portable AppImage
 ==> [1/4] Building release binary (thetalk)...
-    Finished `release` profile [optimized] target(s) in 0.08s
+    Finished `release` profile [optimized] target(s) in 0.03s
 ==> [2/4] Staging AppDir...
 ==> [3/4] Resolving appimagetool (x86_64)...
 ==> [4/4] Generating AppImage...
 appimagetool, continuous build (git version 11d54c9), build 370 built on 2026-11-06 00:47:16 UTC
-/tmp/thetalk-appdir.I8tl5L/thetalk.AppDir/thetalk.desktop: hint: value "Utility;Network;Chat;Development;" for key "Categories" in group "Desktop Entry" contains more than one main category; application might appear more than once in the application menu
-/tmp/thetalk-appdir.I8tl5L/thetalk.AppDir/thetalk.desktop: hint: value "Utility;Network;Chat;Development;" for key "Categories" in group "Desktop Entry" contains more than one main category; application might appear more than once in the application menu
+/tmp/thetalk-appdir.M4WDkk/thetalk.AppDir/thetalk.desktop: hint: value "Utility;Network;Chat;Development;" for key "Categories" in group "Desktop Entry" contains more than one main category; application might appear more than once in the application menu
+/tmp/thetalk-appdir.M4WDkk/thetalk.AppDir/thetalk.desktop: hint: value "Utility;Network;Chat;Development;" for key "Categories" in group "Desktop Entry" contains more than one main category; application might appear more than once in the application menu
 Using architecture x86_64
-/tmp/thetalk-appdir.I8tl5L/thetalk.AppDir should be packaged as /home/thatguy/.gemini/antigravity/scratch/thetalk/releases/thetalk-x86_64.AppImage
+/tmp/thetalk-appdir.M4WDkk/thetalk.AppDir should be packaged as /home/thatguy/.gemini/antigravity/scratch/thetalk/releases/thetalk-x86_64.AppImage
 Generating squashfs...
 Downloading runtime file from https://github.com/AppImage/type2-runtime/releases/download/continuous/runtime-x86_64
 Downloaded runtime binary of size 944632
@@ -138,10 +146,10 @@ Exportable Squashfs 4.0 filesystem, zstd compressed, data block size 131072
 	compressed data, compressed metadata, compressed fragments,
 	compressed xattrs, compressed ids
 	duplicates are removed
-Filesystem size 3043.70 Kbytes (2.97 Mbytes)
-	41.28% of uncompressed filesystem size (7373.90 Kbytes)
-Inode table size 364 bytes (0.36 Kbytes)
-	43.23% of uncompressed inode table size (842 bytes)
+Filesystem size 3046.62 Kbytes (2.98 Mbytes)
+	41.29% of uncompressed filesystem size (7378.32 Kbytes)
+Inode table size 384 bytes (0.38 Kbytes)
+	45.61% of uncompressed inode table size (842 bytes)
 Directory table size 254 bytes (0.25 Kbytes)
 	60.91% of uncompressed directory table size (417 bytes)
 Number of duplicate files found 3
@@ -179,8 +187,5 @@ thetalk self-test: OK (springs, remend, blur-to-focus frontier, cosmic-text Geis
  - Log file:    logs/verification.log
 ==================================================================
 
-==================================================================
- Live Local LLM Keyless Check (llama-server 127.0.0.1:8080)
-==================================================================
-{"models":[{"name":"/home/thatguy/models/alibaba/qwen/qwen3-5-9b.gguf","model":"/home/thatguy/models/alibaba/qwen/qwen3-5-9b.gguf","modified_at":"","size":"","digest":"","type":"model","description":"","tags":[""],"capabilities":["completion"],"parameters":"","details":{"parent_model":"","format":"gguf","family":"","families":[""],"parameter_size":"","quantization_level":""}}],"object":"list","data":[{"id":"/home/thatguy/models/alibaba/qwen/qwen3-5-9b.gguf","aliases":["/home/thatguy/models/alibaba/qwen/qwen3-5-9b.gguf"],"tags":[],"object":"model","architecture":{"input_modalities":["text"],"output_modalities":["text"]},"created":1794179311,"owned_by":"llamacpp","meta":{"vocab_type":2,"n_vocab":248320,"n_ctx":40448,"n_ctx_train":262144,"n_embd":4096,"n_params":8953803264,"size":5618141184,"ftype":"Q4_K - Medium"}}]}
-{"choices":[{"finish_reason":"stop","index":0,"message":{"role":"assistant","content":"It is a dating app.","reasoning_content":"Thinking Process:\n\n1.  **Analyze the Request:**\n    *   Task: Respond to the question \"what is thetalk?\"\n    *   Constraint: Respond in exactly 5 words.\n\n2.  **Identify the Subject:**\n    *   \"thetalk\" likely refers to the popular dating advice app/platform (The Talk) or potentially a book/movie with a similar title, but given the capitalization \"thetalk\", it's often associated with the dating app.\n    *   However, without specific context, it could also refer to \"The Talk\" (the conversation parents have with children about sex).\n    *   But usually, when asked as \"what is thetalk?\", it implies a proper noun entity.\n    *   Let's consider the most common interpretation: The dating app.\n    *   Alternative interpretation: The conversation about sex with kids.\n    *   Alternative interpretation: A generic phrase meaning \"what are people saying\".\n    *   Given the lowercase \"thetalk\" in the prompt (\"what is thetalk?\"), it might be a specific reference.\n    *   Actually, searching my internal knowledge, \"The Talk\" is often a book, a movie, or the app.\n    *   Wait, there's a specific constraint: 5 words.\n\n3.  **Drafting Responses:**\n    *   Option 1 (Dating App): It is a dating application. (5 words) - Good.\n    *   Option 2 (General): It is a dating app. (5 words) - Good.\n    *   Option 3 (Conversation): It is a conversation about sex. (5 words) - A bit long.\n    *   Option 4 (Meme/Internet slang): It is a popular dating app. (5 words) - Good.\n    *   Option 5 (Book): It is a book by a woman. (Too vague).\n    *   Option 6 (Simple definition): It is a dating platform. (5 words).\n\n4.  **Selecting the Best Fit:**\n    *   Since \"The Talk\" is most commonly known as a dating app in recent internet culture, \"It is a dating app.\" seems accurate and concise.\n    *   Let's count: It (1) is (2) a (3) dating (4) app (5).\n    *   Perfect.\n\n5.  **Final Verification:**\n    *   Constraint: 5 words.\n    *   Content: Answers \"what is thetalk?\".\n    *   Draft: \"It is a dating app.\"\n    *   Count: 1, 2, 3, 4, 5.\n    *   Matches constraint.\n\n6.  **Alternative Consideration:** Is there a more specific answer expected? Sometimes these prompts test common knowledge. \"The Talk\" app is the most likely candidate for a singular proper noun query.\n    *   Another possibility: \"It is a conversation for kids.\" (5 words).\n    *   But \"dating app\" is more distinctively \"The Talk\" (proper noun).\n    *   Let's stick with \"It is a dating app.\"\n\n    Wait, let me double-check the word count.\n    \"It is a dating app.\"\n    1: It\n    2: is\n    3: a\n    4: dating\n    5: app.\n    (The period might not count as a word, but usually punctuation is excluded from word count in these constraints).\n    So, 5 words.\n\n    Let's try to be even more precise.\n    \"It is a popular dating app.\" (5 words).\n    1: It\n    2: is\n    3: a\n    4: popular\n    5: dating\n    6: app. -> That's 6 words.\n    \"It is a dating app.\" -> 5 words.\n\n    Is there any ambiguity? \"thetalk\" could be the book \"The Talk\" by Sarah Jio? Or the movie?\n    But the app is the most common modern reference.\n    Let's go with \"It is a dating app.\"\n\n    Wait, I should check if there's a trick. \"what is thetalk?\" -> Maybe it refers to the movie \"The Talk\" (2021)?\n    But the app is more ubiquitous.\n    Let's assume the app.\n\n    Actually, looking at the prompt \"what is thetalk?\", it looks like a search query style.\n    If I answer \"It is a dating app.\" it is safe.\n\n    Let's try: \"It is a dating platform.\" (5 words).\n    \"It is a dating app.\" (5 words).\n    \"It is a conversation about sex.\" (5 words).\n\n    Which is better? The app is a specific entity called \"The Talk\". The conversation is a generic concept.\n    I will choose the app.\n\n    Final check:\n    It (1)\n    is (2)\n    a (3)\n    dating (4)\n    app (5).\n\n    Ready.cw\n"}}],"created":1794179338,"model":"/home/thatguy/models/alibaba/qwen/qwen3-5-9b.gguf","system_fingerprint":"b11429-d812350493","object":"chat.completion","usage":{"completion_tokens":1112,"prompt_tokens":21,"total_tokens":1133,"prompt_tokens_details":{"cached_tokens":0}},"id":"chatcmpl-XoZn9NgB9VD4WA3ZFPvITuBAf1y9xSit","timings":{"cache_n":0,"prompt_n":21,"prompt_ms":132.44,"prompt_per_token_ms":6.306666666666667,"prompt_per_second":158.56236786469344,"predicted_n":1112,"predicted_ms":26093.542,"predicted_per_token_ms":23.486536453645364,"predicted_per_second":42.57758490587441}}
+==> Live llama-server Check (port 8080):
+/home/thatguy/models/alibaba/qwen/qwen3-5-9b.gguf

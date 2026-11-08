@@ -31,6 +31,13 @@ static FONT_GEIST_ITALIC: &[u8] = include_bytes!("../assets/fonts/Geist-Italic.t
 static FONT_GEIST_MONO_REGULAR: &[u8] = include_bytes!("../assets/fonts/GeistMono-Regular.ttf");
 static FONT_GEIST_MONO_MEDIUM: &[u8] = include_bytes!("../assets/fonts/GeistMono-Medium.ttf");
 
+struct ShadowTemplate {
+    key: [u32; 3],
+    margin: f32,
+    corner: f32,
+    pixmap: Pixmap,
+}
+
 pub struct Renderer {
     pub font_system: FontSystem,
     pub swash_cache: SwashCache,
@@ -42,7 +49,7 @@ pub struct Renderer {
     panel_transition: PanelTransition,
     previous_panel: Option<PanelSnapshot>,
     outgoing_panel: Option<PanelSnapshot>,
-    shadow_cache: Option<([u32; 7], Pixmap)>,
+    shadow_cache: Option<ShadowTemplate>,
     glyph_placements: Vec<(cosmic_text::CacheKey, i32, i32, u32, u32)>,
     message_cache: Vec<(usize, u64, Rc<ShapedMessage>)>,
 }
@@ -268,25 +275,7 @@ impl Renderer {
         card.y += (1.0 - presence) * 14.0;
         let radius = state.card_radius.value.clamp(8.0, 28.0);
 
-        // Shadow is a low-frequency signal: rasterize once in logical pixels,
-        // cache while stationary, and bilinearly sample at output scale. Text
-        // and card edges remain native-resolution. This bounds HiDPI blur cost.
-        let key = [card.x.to_bits(), card.y.to_bits(), card.w.to_bits(), card.h.to_bits(),
-            radius.to_bits(), theme.shadow_alpha.to_bits(), self.pixmap.height()];
-        if self.shadow_cache.as_ref().map(|(old, _)| *old) != Some(key) {
-            let mut shadow = Pixmap::new((self.pixmap.width() as f32 / scale).ceil() as u32,
-                (self.pixmap.height() as f32 / scale).ceil() as u32).expect("shadow surface");
-            for (offset, sigma, alpha) in [(3.0, 8.0, theme.shadow_alpha), (1.0, 2.5, theme.shadow_alpha * 0.42)] {
-                draw_diffuse_rrect_shadow(&mut shadow.as_mut(), card.x, card.y, card.w, card.h,
-                    radius, offset, sigma, alpha, (0,0,0));
-            }
-            self.shadow_cache = Some((key, shadow));
-        }
-        if let Some((_, shadow)) = &self.shadow_cache {
-            self.pixmap.draw_pixmap(0, 0, shadow.as_ref(), &tiny_skia::PixmapPaint {
-                opacity: presence, quality: tiny_skia::FilterQuality::Bilinear, ..Default::default()
-            }, Transform::from_scale(scale, scale), None);
-        }
+        self.draw_card_shadow(card, radius, presence, &theme);
 
         // 5. Card clip mask + Quiet Paper `float` fill + monochrome analog film grain
         self.mask.clear();
@@ -420,6 +409,116 @@ impl Renderer {
         self.stroke_rrect_logical(card.x, card.y, card.w, card.h, radius, 1.0, outer_border);
     }
 
+    fn draw_card_shadow(
+        &mut self,
+        card: LogicalRect,
+        radius: f32,
+        presence: f32,
+        theme: &Theme,
+    ) {
+        if presence <= 0.005 || theme.shadow_alpha <= 0.001 {
+            return;
+        }
+
+        let scale = self.scale;
+        let margin = 38.0f32;
+        let template_corner = 36.0f32;
+        let key = [
+            radius.to_bits(),
+            (scale * 1000.0).round() as u32,
+            theme.shadow_alpha.to_bits(),
+        ];
+
+        let needs_rebuild = match &self.shadow_cache {
+            Some(cached) => cached.key != key,
+            None => true,
+        };
+
+        if needs_rebuild {
+            let temp_card_w = template_corner * 2.0 + 4.0;
+            let temp_card_h = template_corner * 2.0 + 4.0;
+            let tw = ((temp_card_w + margin * 2.0) * scale).ceil().max(1.0) as u32;
+            let th = ((temp_card_h + margin * 2.0) * scale).ceil().max(1.0) as u32;
+
+            if let Some(mut shadow_pixmap) = Pixmap::new(tw, th) {
+                for (offset, sigma, alpha) in [
+                    (3.0, 8.0, theme.shadow_alpha),
+                    (1.0, 2.5, theme.shadow_alpha * 0.42),
+                ] {
+                    draw_diffuse_rrect_shadow(
+                        &mut shadow_pixmap.as_mut(),
+                        margin * scale,
+                        margin * scale,
+                        temp_card_w * scale,
+                        temp_card_h * scale,
+                        radius * scale,
+                        offset * scale,
+                        sigma * scale,
+                        alpha,
+                        (0, 0, 0),
+                    );
+                }
+                self.shadow_cache = Some(ShadowTemplate {
+                    key,
+                    margin,
+                    corner: template_corner,
+                    pixmap: shadow_pixmap,
+                });
+            }
+        }
+
+        let (pixmap, template) = match (&mut self.pixmap, &self.shadow_cache) {
+            (p, Some(t)) => (p, t),
+            _ => return,
+        };
+
+        let margin = template.margin;
+        let corner = template.corner.min(card.w * 0.45).min(card.h * 0.45);
+        let p_margin = (margin * scale).round() as i32;
+        let p_corner = (corner * scale).round() as i32;
+
+        let dst_x = ((card.x - margin) * scale).round() as i32;
+        let dst_y = ((card.y - margin) * scale).round() as i32;
+        let dst_w = ((card.w + margin * 2.0) * scale).round() as i32;
+        let dst_h = ((card.h + margin * 2.0) * scale).round() as i32;
+
+        let tw = template.pixmap.width();
+        let th = template.pixmap.height();
+
+        let cw = (p_margin + p_corner).max(0) as u32;
+        let ch = (p_margin + p_corner).max(0) as u32;
+
+        // 1. Top-left corner
+        blit_sub_pixmap(pixmap, dst_x, dst_y, &template.pixmap, 0, 0, cw, ch, presence);
+
+        // 2. Top-right corner
+        blit_sub_pixmap(pixmap, dst_x + dst_w - cw as i32, dst_y, &template.pixmap, tw - cw, 0, cw, ch, presence);
+
+        // 3. Bottom-left corner
+        blit_sub_pixmap(pixmap, dst_x, dst_y + dst_h - ch as i32, &template.pixmap, 0, th - ch, cw, ch, presence);
+
+        // 4. Bottom-right corner
+        blit_sub_pixmap(pixmap, dst_x + dst_w - cw as i32, dst_y + dst_h - ch as i32, &template.pixmap, tw - cw, th - ch, cw, ch, presence);
+
+        // 5. Top edge (stretched horizontally)
+        let mid_w = (dst_w - (cw as i32 * 2)).max(0) as u32;
+        if mid_w > 0 {
+            let src_sample_x = tw / 2;
+            blit_stretched_horizontal(pixmap, dst_x + cw as i32, dst_y, mid_w, &template.pixmap, src_sample_x, 0, ch, presence);
+
+            // 6. Bottom edge (stretched horizontally)
+            blit_stretched_horizontal(pixmap, dst_x + cw as i32, dst_y + dst_h - ch as i32, mid_w, &template.pixmap, src_sample_x, th - ch, ch, presence);
+        }
+
+        // 7. Left & Right edges (stretched vertically)
+        let mid_h = (dst_h - (ch as i32 * 2)).max(0) as u32;
+        if mid_h > 0 {
+            let src_sample_y = th / 2;
+            blit_stretched_vertical(pixmap, dst_x, dst_y + ch as i32, mid_h, &template.pixmap, 0, src_sample_y, cw, presence);
+            blit_stretched_vertical(pixmap, dst_x + dst_w - cw as i32, dst_y + ch as i32, mid_h, &template.pixmap, tw - cw, src_sample_y, cw, presence);
+        }
+    }
+
     /// Composite the outgoing panel bottom-centered inside the current rounded
     /// card. No scaling of glyphs; shrink/expand is handled solely by geometry.
     fn retain_panel(&mut self, card: LogicalRect, composer_top: f32, outgoing_alpha: f32) {
@@ -444,13 +543,17 @@ impl Renderer {
                 }, Transform::identity(), Some(&self.mask));
             }
         }
-        let mut pixels = self.previous_panel.take().map(|p| p.pixels).unwrap_or_default();
-        pixels.clear();
-        pixels.reserve(w * h * 4);
-        for y in y0..y1 {
-            pixels.extend_from_slice(&self.pixmap.data()[(y * pw + x0) * 4..(y * pw + x1) * 4]);
+        // Only snapshot outgoing panel when stationary or when transition completes,
+        // eliminating redundant full-frame copies during active spring transitions.
+        if outgoing_alpha <= 0.001 {
+            let mut pixels = self.previous_panel.take().map(|p| p.pixels).unwrap_or_default();
+            pixels.clear();
+            pixels.reserve(w * h * 4);
+            for y in y0..y1 {
+                pixels.extend_from_slice(&self.pixmap.data()[(y * pw + x0) * 4..(y * pw + x1) * 4]);
+            }
+            self.previous_panel = Some(PanelSnapshot { width: w, height: h, pixels });
         }
-        self.previous_panel = Some(PanelSnapshot { width: w, height: h, pixels });
     }
 
     fn restrict_mask(&mut self, clip: ClipBox) {
@@ -485,6 +588,7 @@ impl Renderer {
 
         for py in y0..y1 {
             let row = (py as usize) * stride;
+            let lut_row = ((py as usize) & 127) << 7;
             for px in x0..x1 {
                 let idx = row + px as usize;
                 let m = mask_data[idx];
@@ -495,7 +599,7 @@ impl Renderer {
                 if dst[p + 3] < 240 {
                     continue;
                 }
-                let n = ((self.grain.sample(px as usize, py as usize) as i32) * scale_amp) >> 6;
+                let n = ((self.grain.sample_fast(lut_row, px as usize) as i32) * scale_amp) >> 6;
                 dst[p] = (dst[p] as i32 + n).clamp(0, dst[p + 3] as i32) as u8;
                 dst[p + 1] = (dst[p + 1] as i32 + n).clamp(0, dst[p + 3] as i32) as u8;
                 dst[p + 2] = (dst[p + 2] as i32 + n).clamp(0, dst[p + 3] as i32) as u8;
@@ -529,6 +633,16 @@ impl Renderer {
     ) {
         let scale = self.scale;
         let theme = state.theme;
+
+        self.fill_rrect_logical(
+            bar_rect.x,
+            bar_rect.y,
+            bar_rect.w,
+            bar_rect.h,
+            16.0,
+            theme.float.with_alpha(presence),
+            true,
+        );
 
         state.hit_zones.push(HitZone {
             rect: LogicalRect::new(
@@ -1410,8 +1524,8 @@ impl Renderer {
                     let col_widths: Vec<f32> = (0..cols).map(|c| {
                         let natural = headers.get(c).into_iter().chain(rows.iter().filter_map(|r| r.get(c)))
                             .map(|spans| spans.iter().map(|s| s.text.chars().count()).sum::<usize>())
-                            .max().unwrap_or(0) as f32 * 7.2 + 20.0;
-                        (inner_w / cols as f32).max(natural.clamp(88.0, 360.0))
+                            .max().unwrap_or(0) as f32 * 7.5 + 24.0;
+                        (inner_w / cols as f32).max(natural.clamp(100.0, 420.0))
                     }).collect();
 
                     let mut header_cells = Vec::with_capacity(cols);
@@ -1517,9 +1631,15 @@ impl Renderer {
                 key, max_x, rect: LogicalRect::new(clip.x0 as f32 / ctx.scale, clip.y0 as f32 / ctx.scale,
                     (clip.x1 - clip.x0) as f32 / ctx.scale, (clip.y1 - clip.y0) as f32 / ctx.scale),
             });
-            let thumb_w = (rect.w * rect.w / content_w).max(24.0).min(rect.w);
-            self.fill_rrect_logical(rect.x + (rect.w - thumb_w) * value / max_x, rect.y + rect.h - 2.0,
-                thumb_w, 2.0, 1.0, state.theme.muted.with_alpha(ctx.alpha_mul * 0.35), true);
+            // Sleek 3px scrollbar track and thumb
+            let track_x = rect.x;
+            let track_w = rect.w;
+            self.fill_rrect_logical(track_x, rect.y + rect.h - 4.0, track_w, 3.0, 1.5,
+                state.theme.line.with_alpha(ctx.alpha_mul * 0.30), true);
+            let thumb_w = (track_w * track_w / content_w).max(28.0).min(track_w);
+            let thumb_x = track_x + (track_w - thumb_w) * (value / max_x);
+            self.fill_rrect_logical(thumb_x, rect.y + rect.h - 4.0,
+                thumb_w, 3.0, 1.5, state.theme.muted.with_alpha(ctx.alpha_mul * 0.65), true);
         }
         (value, DrawContext { clip, ..ctx })
     }
@@ -1613,23 +1733,32 @@ impl Renderer {
 
                 if let Some((tbuf, th)) = expanded_opt {
                     let visible_h = (*th + 10.0) * state.messages[sm.msg_idx].thinking_reveal.value.clamp(0.0, 1.0);
-                    self.fill_rect_logical(
-                        pad_x + 3.0,
-                        my,
-                        2.0,
-                        th.min(visible_h),
-                        theme.accent.with_alpha(mctx.alpha_mul * 0.40),
-                        true,
-                    );
+                    let line_h = th.min(visible_h).min((card_y + viewport_h - my).max(0.0));
+                    if line_h > 0.0 {
+                        self.fill_rect_logical(
+                            pad_x + 3.0,
+                            my,
+                            2.0,
+                            line_h,
+                            theme.accent.with_alpha(mctx.alpha_mul * 0.40),
+                            true,
+                        );
+                    }
                     let reasoning_states: Vec<_> = state.messages[sm.msg_idx].stream.reasoning_frontier.iter().map(|word| {
-                        let t = ((now - word.birth_secs) / 0.24).clamp(0.0, 1.0) as f32;
-                        WordFocusState { sigma_logical: 0.0, opacity: 0.45 + 0.55 * t * (2.0 - t), offset_y: 0.6 * (1.0 - t) }
+                        let t = ((now - word.birth_secs) / 0.28).clamp(0.0, 1.0) as f32;
+                        let ease = t * (2.0 - t);
+                        let sigma = 1.1 * (1.0 - ease);
+                        let opacity = 0.25 + 0.75 * ease;
+                        let offset_y = 0.8 * (1.0 - ease);
+                        WordFocusState { sigma_logical: sigma, opacity, offset_y }
                     }).collect();
+                    let body_clip_y1 = ((my + visible_h) * ctx.scale).floor() as i32;
+                    let viewport_bottom_px = ((card_y + viewport_h) * ctx.scale).floor() as i32;
                     let body_ctx = DrawContext { clip: mctx.clip.intersect(ClipBox {
                         x0: ((pad_x + 14.0) * ctx.scale).floor() as i32,
                         y0: (my * ctx.scale).floor() as i32,
                         x1: ((pad_x + inner_w) * ctx.scale).ceil() as i32,
-                        y1: ((my + visible_h) * ctx.scale).floor() as i32,
+                        y1: body_clip_y1.min(viewport_bottom_px),
                     }), ..mctx };
                     self.draw_buffer_runs(tbuf, pad_x + 14.0, my, &reasoning_states, None, state, body_ctx);
                     my += visible_h;
@@ -1882,6 +2011,23 @@ impl Renderer {
                         let content_w: f32 = col_widths.iter().sum();
                         let (offset, table_ctx) = self.overflow_viewport(state, (*msg_idx, *block_idx),
                             LogicalRect::new(pad_x + 1.0, my + 1.0, inner_w - 2.0, total_th - 2.0), content_w, mctx);
+
+                        // Subtle vertical column dividers
+                        let mut div_x = pad_x - offset;
+                        for (c, w) in col_widths.iter().enumerate() {
+                            if c > 0 && div_x > pad_x + 2.0 && div_x < pad_x + inner_w - 2.0 {
+                                self.fill_rect_logical(
+                                    div_x,
+                                    my + 1.0,
+                                    1.0,
+                                    total_th - 2.0,
+                                    theme.line.with_alpha(mctx.alpha_mul * 0.32),
+                                    true,
+                                );
+                            }
+                            div_x += *w;
+                        }
+
                         let mut cx = pad_x - offset;
                         for (c, cbuf) in header_cells.iter().enumerate() {
                             self.draw_buffer_runs(
@@ -2069,7 +2215,8 @@ impl Renderer {
     ) -> (Buffer, f32) {
         let mut buffer = Buffer::new(&mut self.font_system, Metrics::new(font_size, line_height));
         buffer.set_wrap(&mut self.font_system, wrap);
-        buffer.set_size(&mut self.font_system, Some(max_w.max(20.0)), None);
+        let buffer_w = if wrap == Wrap::None { None } else { Some(max_w.max(20.0)) };
+        buffer.set_size(&mut self.font_system, buffer_w, None);
         let base_attrs = Attrs::new()
             .family(Family::SansSerif)
             .color(default_color.to_cosmic());
@@ -3045,6 +3192,228 @@ pub fn build_rrect_path(x: f32, y: f32, w: f32, h: f32, r: f32) -> Option<tiny_s
     pb.cubic_to(x, y + r - c, x + r - c, y, x + r, y);
     pb.close();
     pb.finish()
+}
+
+#[allow(clippy::too_many_arguments)]
+fn blit_sub_pixmap(
+    dst: &mut Pixmap,
+    mut dst_x: i32,
+    mut dst_y: i32,
+    src: &Pixmap,
+    mut src_x: u32,
+    mut src_y: u32,
+    mut w: u32,
+    mut h: u32,
+    opacity: f32,
+) {
+    let dw = dst.width() as i32;
+    let dh = dst.height() as i32;
+
+    if dst_x < 0 {
+        let d = (-dst_x) as u32;
+        if d >= w { return; }
+        src_x += d;
+        w -= d;
+        dst_x = 0;
+    }
+    if dst_y < 0 {
+        let d = (-dst_y) as u32;
+        if d >= h { return; }
+        src_y += d;
+        h -= d;
+        dst_y = 0;
+    }
+    if dst_x >= dw || dst_y >= dh {
+        return;
+    }
+    w = w.min((dw - dst_x) as u32);
+    h = h.min((dh - dst_y) as u32);
+    if w == 0 || h == 0 {
+        return;
+    }
+
+    let op = (opacity.clamp(0.0, 1.0) * 256.0).round() as u32;
+    let src_stride = src.width() as usize * 4;
+    let dst_stride = dst.width() as usize * 4;
+    let src_data = src.data();
+    let dst_data = dst.data_mut();
+
+    for y in 0..h as usize {
+        let s_row_off = (src_y as usize + y) * src_stride + src_x as usize * 4;
+        let d_row_off = (dst_y as usize + y) * dst_stride + dst_x as usize * 4;
+        let s_row = &src_data[s_row_off..s_row_off + w as usize * 4];
+        let d_row = &mut dst_data[d_row_off..d_row_off + w as usize * 4];
+
+        for x in 0..w as usize {
+            let sa = (s_row[x * 4 + 3] as u32 * op) >> 8;
+            if sa == 0 {
+                continue;
+            }
+            let da = d_row[x * 4 + 3] as u32;
+            if da == 0 {
+                d_row[x * 4] = ((s_row[x * 4] as u32 * op) >> 8) as u8;
+                d_row[x * 4 + 1] = ((s_row[x * 4 + 1] as u32 * op) >> 8) as u8;
+                d_row[x * 4 + 2] = ((s_row[x * 4 + 2] as u32 * op) >> 8) as u8;
+                d_row[x * 4 + 3] = sa as u8;
+            } else {
+                let inv_sa = 255 - sa;
+                let sr = (s_row[x * 4] as u32 * op) >> 8;
+                let sg = (s_row[x * 4 + 1] as u32 * op) >> 8;
+                let sb = (s_row[x * 4 + 2] as u32 * op) >> 8;
+                d_row[x * 4] = (sr + (d_row[x * 4] as u32 * inv_sa + 127) / 255) as u8;
+                d_row[x * 4 + 1] = (sg + (d_row[x * 4 + 1] as u32 * inv_sa + 127) / 255) as u8;
+                d_row[x * 4 + 2] = (sb + (d_row[x * 4 + 2] as u32 * inv_sa + 127) / 255) as u8;
+                d_row[x * 4 + 3] = (sa + (da * inv_sa + 127) / 255) as u8;
+            }
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn blit_stretched_horizontal(
+    dst: &mut Pixmap,
+    mut dst_x: i32,
+    mut dst_y: i32,
+    mut dst_w: u32,
+    src: &Pixmap,
+    src_x: u32,
+    mut src_y: u32,
+    mut h: u32,
+    opacity: f32,
+) {
+    let dw = dst.width() as i32;
+    let dh = dst.height() as i32;
+
+    if dst_x < 0 {
+        let d = (-dst_x) as u32;
+        if d >= dst_w { return; }
+        dst_w -= d;
+        dst_x = 0;
+    }
+    if dst_y < 0 {
+        let d = (-dst_y) as u32;
+        if d >= h { return; }
+        src_y += d;
+        h -= d;
+        dst_y = 0;
+    }
+    if dst_x >= dw || dst_y >= dh {
+        return;
+    }
+    dst_w = dst_w.min((dw - dst_x) as u32);
+    h = h.min((dh - dst_y) as u32);
+    if dst_w == 0 || h == 0 {
+        return;
+    }
+
+    let op = (opacity.clamp(0.0, 1.0) * 256.0).round() as u32;
+    let src_stride = src.width() as usize * 4;
+    let dst_stride = dst.width() as usize * 4;
+    let src_data = src.data();
+    let dst_data = dst.data_mut();
+
+    for y in 0..h as usize {
+        let s_idx = (src_y as usize + y) * src_stride + src_x as usize * 4;
+        let sa = (src_data[s_idx + 3] as u32 * op) >> 8;
+        if sa == 0 {
+            continue;
+        }
+        let sr = (src_data[s_idx] as u32 * op) >> 8;
+        let sg = (src_data[s_idx + 1] as u32 * op) >> 8;
+        let sb = (src_data[s_idx + 2] as u32 * op) >> 8;
+        let inv_sa = 255 - sa;
+
+        let d_row_off = (dst_y as usize + y) * dst_stride + dst_x as usize * 4;
+        let d_row = &mut dst_data[d_row_off..d_row_off + dst_w as usize * 4];
+
+        for x in 0..dst_w as usize {
+            let da = d_row[x * 4 + 3] as u32;
+            if da == 0 {
+                d_row[x * 4] = sr as u8;
+                d_row[x * 4 + 1] = sg as u8;
+                d_row[x * 4 + 2] = sb as u8;
+                d_row[x * 4 + 3] = sa as u8;
+            } else {
+                d_row[x * 4] = (sr + (d_row[x * 4] as u32 * inv_sa + 127) / 255) as u8;
+                d_row[x * 4 + 1] = (sg + (d_row[x * 4 + 1] as u32 * inv_sa + 127) / 255) as u8;
+                d_row[x * 4 + 2] = (sb + (d_row[x * 4 + 2] as u32 * inv_sa + 127) / 255) as u8;
+                d_row[x * 4 + 3] = (sa + (da * inv_sa + 127) / 255) as u8;
+            }
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn blit_stretched_vertical(
+    dst: &mut Pixmap,
+    mut dst_x: i32,
+    mut dst_y: i32,
+    mut dst_h: u32,
+    src: &Pixmap,
+    mut src_x: u32,
+    src_y: u32,
+    mut w: u32,
+    opacity: f32,
+) {
+    let dw = dst.width() as i32;
+    let dh = dst.height() as i32;
+
+    if dst_x < 0 {
+        let d = (-dst_x) as u32;
+        if d >= w { return; }
+        src_x += d;
+        w -= d;
+        dst_x = 0;
+    }
+    if dst_y < 0 {
+        let d = (-dst_y) as u32;
+        if d >= dst_h { return; }
+        dst_h -= d;
+        dst_y = 0;
+    }
+    if dst_x >= dw || dst_y >= dh {
+        return;
+    }
+    w = w.min((dw - dst_x) as u32);
+    dst_h = dst_h.min((dh - dst_y) as u32);
+    if w == 0 || dst_h == 0 {
+        return;
+    }
+
+    let op = (opacity.clamp(0.0, 1.0) * 256.0).round() as u32;
+    let src_stride = src.width() as usize * 4;
+    let dst_stride = dst.width() as usize * 4;
+    let s_row_off = src_y as usize * src_stride + src_x as usize * 4;
+    let s_row = &src.data()[s_row_off..s_row_off + w as usize * 4];
+    let dst_data = dst.data_mut();
+
+    for y in 0..dst_h as usize {
+        let d_row_off = (dst_y as usize + y) * dst_stride + dst_x as usize * 4;
+        let d_row = &mut dst_data[d_row_off..d_row_off + w as usize * 4];
+
+        for x in 0..w as usize {
+            let sa = (s_row[x * 4 + 3] as u32 * op) >> 8;
+            if sa == 0 {
+                continue;
+            }
+            let da = d_row[x * 4 + 3] as u32;
+            if da == 0 {
+                d_row[x * 4] = ((s_row[x * 4] as u32 * op) >> 8) as u8;
+                d_row[x * 4 + 1] = ((s_row[x * 4 + 1] as u32 * op) >> 8) as u8;
+                d_row[x * 4 + 2] = ((s_row[x * 4 + 2] as u32 * op) >> 8) as u8;
+                d_row[x * 4 + 3] = sa as u8;
+            } else {
+                let inv_sa = 255 - sa;
+                let sr = (s_row[x * 4] as u32 * op) >> 8;
+                let sg = (s_row[x * 4 + 1] as u32 * op) >> 8;
+                let sb = (s_row[x * 4 + 2] as u32 * op) >> 8;
+                d_row[x * 4] = (sr + (d_row[x * 4] as u32 * inv_sa + 127) / 255) as u8;
+                d_row[x * 4 + 1] = (sg + (d_row[x * 4 + 1] as u32 * inv_sa + 127) / 255) as u8;
+                d_row[x * 4 + 2] = (sb + (d_row[x * 4 + 2] as u32 * inv_sa + 127) / 255) as u8;
+                d_row[x * 4 + 3] = (sa + (da * inv_sa + 127) / 255) as u8;
+            }
+        }
+    }
 }
 
 fn reasoning_spans(text: &str, frontier: &[crate::stream::FrontierWord], color: Rgba) -> Vec<RichSpan> {

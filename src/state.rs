@@ -331,7 +331,7 @@ impl ChatItem {
             streaming: false,
             error: None,
             thinking_expanded: false,
-            thinking_reveal: Spring::new(0.0, SpringSpec::SCROLL),
+            thinking_reveal: Spring::new(0.0, SpringSpec::DEFAULT_SPATIAL),
             entrance,
         }
     }
@@ -348,7 +348,7 @@ impl ChatItem {
             streaming: true,
             error: None,
             thinking_expanded: false,
-            thinking_reveal: Spring::new(0.0, SpringSpec::SCROLL),
+            thinking_reveal: Spring::new(0.0, SpringSpec::DEFAULT_SPATIAL),
             entrance,
         }
     }
@@ -961,10 +961,23 @@ impl AppState {
                 return;
             }
         }
+        // When hovering over a horizontally overflowing block (table/code),
+        // allow mouse wheel to scroll it horizontally even without holding shift.
+        if dy.abs() > 0.01 && !shift {
+            if let Some(region) = self.pointer_pos.and_then(|(x, y)|
+                self.scroll_regions.iter().rev().find(|r| r.rect.contains(x, y))) {
+                if region.max_x > 0.5 {
+                    let offset = self.block_scroll.entry(region.key).or_default();
+                    *offset = (*offset + dy).clamp(0.0, region.max_x);
+                    return;
+                }
+            }
+        }
         if shift || self.panel() != Panel::Conversation { return; }
         if direct {
-            let next = (self.scroll_spring.value + dy).clamp(0.0, self.max_scroll);
-            self.scroll_spring.snap_to(next);
+            // Fluid trackpad momentum: retarget with spring physics so movement glides naturally
+            let next = (self.scroll_spring.target + dy).clamp(0.0, self.max_scroll);
+            self.scroll_spring.retarget(next);
             self.user_scrolled_up = next < self.max_scroll - 24.0;
         } else { self.scroll_by(dy); }
     }

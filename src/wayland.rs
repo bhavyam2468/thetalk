@@ -804,9 +804,9 @@ impl PointerHandler for WaylandApp {
                     // Discrete wheel steps are not pixel deltas. Finger events
                     // have no detents: apply their logical deltas directly.
                     let wheel = vertical.discrete != 0 || horizontal.discrete != 0;
-                    let dx = if horizontal.discrete != 0 { horizontal.discrete as f32 * 66.0 }
+                    let dx = if horizontal.discrete != 0 { horizontal.discrete as f32 * 112.0 }
                         else { horizontal.absolute as f32 };
-                    let dy = if vertical.discrete != 0 { vertical.discrete as f32 * 66.0 }
+                    let dy = if vertical.discrete != 0 { vertical.discrete as f32 * 112.0 }
                         else { vertical.absolute as f32 };
                     if dx.abs() > 0.01 || dy.abs() > 0.01 {
                         self.app.scroll_input(dx, dy, !wheel, self.modifiers.shift);

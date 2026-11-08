@@ -211,8 +211,14 @@ impl GrainLut {
     }
 
     #[inline(always)]
+    #[allow(dead_code)]
     pub fn sample(&self, x: usize, y: usize) -> i16 {
         self.values[((y & 127) << 7) | (x & 127)] as i16
+    }
+
+    #[inline(always)]
+    pub fn sample_fast(&self, lut_row: usize, x: usize) -> i16 {
+        self.values[lut_row | (x & 127)] as i16
     }
 }
 
