@@ -60,8 +60,6 @@ pub struct AppConfig {
     /// Optional model name — if empty, auto-discovered from `GET {base_url}/models`.
     pub model: String,
     pub theme: ThemeMode,
-    /// Release Wayland keyboard interactivity to underlying windows automatically when unfocused.
-    pub passive_unfocus: bool,
 }
 
 impl Default for AppConfig {
@@ -78,7 +76,6 @@ impl Default for AppConfig {
             api_key,
             model,
             theme: ThemeMode::Dark,
-            passive_unfocus: true,
         }
     }
 }

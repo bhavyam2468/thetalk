@@ -563,7 +563,9 @@ impl AppState {
         let now = self.now_secs();
 
         // Poll LLM events (`ModelsFetched`, `ModelAutoSelected`, `Delta`, `Finished`, `Error`)
-        while let Ok(ev) = self.llm_rx.try_recv() {
+        // A fast producer must not monopolize the UI thread indefinitely.
+        for _ in 0..128 {
+            let Ok(ev) = self.llm_rx.try_recv() else { break; };
             match ev {
                 LlmEvent::ModelsFetched(res) => {
                     self.loading_models = false;
@@ -1287,6 +1289,61 @@ impl AppState {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod interaction_tests {
+    use super::*;
+    fn app() -> AppState {
+        let mut config = AppConfig::default();
+        config.model = "test-model".into(); // no discovery/network in unit tests
+        AppState::new(config)
+    }
+
+    #[test]
+    fn panel_priority_is_shared() {
+        let mut app = app();
+        assert_eq!(app.panel(), Panel::Compact);
+        app.messages.push(ChatItem::new_user("hello".to_string()));
+        assert_eq!(app.panel(), Panel::Conversation);
+        app.composer.set("/");
+        assert_eq!(app.panel(), Panel::Commands);
+        app.settings_open = true;
+        assert_eq!(app.panel(), Panel::Settings);
+    }
+
+    #[test]
+    fn escape_dismisses_regardless_of_draft_or_history() {
+        for history in [false, true] {
+            for draft in ["", "draft", "/"] {
+                let mut app = app();
+                if history { app.messages.push(ChatItem::new_user("hello".to_string())); }
+                app.composer.set(draft);
+                app.handle_key(0xff1b, None, false, false, false);
+                assert!(!app.visible);
+                assert!(!app.wants_keyboard_on_demand());
+            }
+        }
+    }
+
+    #[test]
+    fn eligibility_is_independent_of_pointer_and_ownership() {
+        let mut app = app();
+        for focused in [false, true] {
+            app.has_keyboard_focus = focused;
+            for pointer in [None, Some((0.0, 0.0)), Some((300.0, 300.0))] {
+                app.pointer_pos = pointer;
+                assert!(app.wants_keyboard_on_demand());
+            }
+        }
+        let generation = app.summon_generation;
+        app.has_keyboard_focus = false;
+        app.handle_click(true, false);
+        assert_eq!(app.focus_target, FocusTarget::Composer);
+        assert_eq!(app.summon_generation, generation);
+        app.show_overlay(true);
+        assert_eq!(app.summon_generation, generation + 1);
     }
 }
 

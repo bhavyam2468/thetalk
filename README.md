@@ -8,15 +8,16 @@ No Tauri. No Electron. No WebView. Single native binary & portable `.AppImage` w
 
 ## Why `thetalk` exists
 
-Most Wayland layer-shell launchers and AI overlays hijack keyboard focus (`KeyboardInteractivity::Exclusive` or static full-surface `OnDemand`), making it impossible to keep an answer or live stream on screen while typing into your browser or editor underneath.
+The overlay uses niri's **OnDemand** layer focus, never Exclusive.
 
-`thetalk` solves this directly against `niri`'s `zwlr_layer_shell_v1` focus rules:
+- Opening or explicitly summoning the bar takes keyboard focus.
+- Clicking anywhere in the chat card lets you type into the composer.
+- Clicking another application hands keyboard control to it while the overlay
+  remains visible. Hovering the overlay or streaming a reply does not summon it.
+- Escape dismisses the overlay in every route, preserving the conversation/draft.
+- Rounded transparent corners and shadow padding pass pointer events through.
 
-1. **Zero-hijack passive mode (`KeyboardInteractivity::None`)**: Click into your browser or press `Esc` and `thetalk` stays floating on screen (`Layer::Top`, `exclusive_zone = -1`) while releasing keyboard interactivity completely — even if `focus-follows-mouse` is enabled in `niri`.
-2. **Per-frame `wl_region` card input masking**: Transparent pixels and diffuse Gaussian drop shadows around the floating bar pass 100% of clicks and scroll events straight through to underlying windows.
-3. **Focus-preserving scroll & code copy**: Scrolling Markdown responses or clicking `Copy` on a fenced code block while unfocused keeps `KeyboardInteractivity::None`, so your active window never loses focus. Hovering and clicking an editable text field cleanly re-arms `OnDemand` on the first click.
-
----
+See `AGENTS.md` and `docs/UI_ARCHITECTURE_AUDIT.md` for architecture and verification.
 
 ## Design & Features
 
@@ -64,10 +65,10 @@ binds {
 | Insert newline | `Shift+Enter` |
 | Command menu (`/settings`, `/new`, `/theme`, `/hide`, `/quit`) | Type `/` in bar |
 | Open / close Settings (`Base URL`, optional `API Key`, `Model`) | `/settings`, `Ctrl+,`, or right-click |
-| Release focus to underlying `niri` window (staying visible) | `Esc` (or click outside) |
-| Hide overlay | `Shift+Esc` (or `Esc` when bar is empty, or `thetalk toggle`) |
+| Release focus to underlying `niri` window (staying visible) | Click outside |
+| Hide overlay | `Esc`, `Shift+Esc`, or `thetalk hide` |
 | Reset to thin floating bar | `/new` or `Ctrl+N` / `Ctrl+L` |
-| Stop active generation | `Esc`, `Ctrl+C`, or click stop button |
+| Stop active generation | `Ctrl+C` (without selection), or click stop button |
 
 ---
 

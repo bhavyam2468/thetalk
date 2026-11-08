@@ -224,7 +224,7 @@ pub fn run_wayland(
         // Poll Unix socket IPC commands (`toggle`, `show`, `hide`, `new`, `settings`, `send:...`, `quit`)
         let cmds = client
             .ipc
-            .as_ref()
+            .as_mut()
             .map(|srv| srv.poll_commands())
             .unwrap_or_default();
         if !cmds.is_empty() {

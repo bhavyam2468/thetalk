@@ -1,8 +1,8 @@
 use std::fs;
-use std::io::{BufRead, BufReader, Write};
+use std::io::{Read, Write};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::PathBuf;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum IpcCommand {
@@ -85,6 +85,7 @@ pub fn try_send_to_running(cmd: &IpcCommand) -> Result<bool, String> {
 pub struct IpcServer {
     listener: UnixListener,
     path: PathBuf,
+    pending: Vec<PendingClient>,
 }
 
 impl IpcServer {
@@ -97,21 +98,72 @@ impl IpcServer {
         listener
             .set_nonblocking(true)
             .map_err(|e| e.to_string())?;
-        Ok(Self { listener, path })
+        Ok(Self { listener, path, pending: Vec::new() })
     }
 
-    pub fn poll_commands(&self) -> Vec<IpcCommand> {
-        let mut cmds = Vec::new();
-        while let Ok((stream, _)) = self.listener.accept() {
-            let _ = stream.set_read_timeout(Some(Duration::from_millis(50)));
-            let reader = BufReader::new(stream);
-            for line in reader.lines().map_while(Result::ok) {
-                if let Some(cmd) = IpcCommand::from_wire(&line) {
-                    cmds.push(cmd);
-                }
+    /// Never wait on a sender in the UI loop. Bound peers, bytes and accepts
+    /// per tick so a partial/slow IPC command cannot stall caret or animation.
+    pub fn poll_commands(&mut self) -> Vec<IpcCommand> {
+        for _ in 0..32 {
+            let Ok((stream, _)) = self.listener.accept() else { break; };
+            if self.pending.len() < 32 && stream.set_nonblocking(true).is_ok() {
+                self.pending.push(PendingClient { stream, data: Vec::new(), started: Instant::now() });
             }
         }
+        let mut cmds = Vec::new();
+        self.pending.retain_mut(|peer| peer.poll(&mut cmds));
         cmds
+    }
+
+}
+
+struct PendingClient {
+    stream: UnixStream,
+    data: Vec<u8>,
+    started: Instant,
+}
+
+impl PendingClient {
+    fn poll(&mut self, commands: &mut Vec<IpcCommand>) -> bool {
+        if self.started.elapsed() > Duration::from_secs(2) { return false; }
+        let mut buf = [0_u8; 4096];
+        let eof = match self.stream.read(&mut buf) {
+            Ok(0) => true,
+            Ok(n) => { self.data.extend_from_slice(&buf[..n]); false }
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => false,
+            Err(_) => return false,
+        };
+        if self.data.len() > 64 * 1024 { return false; }
+        let mut consumed = 0;
+        for (i, byte) in self.data.iter().enumerate() {
+            if *byte == b'\n' {
+                if let Ok(line) = std::str::from_utf8(&self.data[consumed..i]) {
+                    if let Some(cmd) = IpcCommand::from_wire(line) { commands.push(cmd); }
+                }
+                consumed = i + 1;
+            }
+        }
+        self.data.drain(..consumed);
+        !eof
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn partial_ipc_does_not_wait_and_survives_across_ticks() {
+        let (mut writer, reader) = UnixStream::pair().unwrap();
+        reader.set_nonblocking(true).unwrap();
+        let mut peer = PendingClient { stream: reader, data: Vec::new(), started: Instant::now() };
+        let mut cmds = Vec::new();
+        assert!(peer.poll(&mut cmds));
+        writer.write_all(b"sho").unwrap();
+        assert!(peer.poll(&mut cmds));
+        assert!(cmds.is_empty());
+        writer.write_all(b"w\n").unwrap();
+        assert!(peer.poll(&mut cmds));
+        assert_eq!(cmds, vec![IpcCommand::Show]);
     }
 }
 

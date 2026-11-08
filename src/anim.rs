@@ -205,29 +205,7 @@ impl LogicalRect {
         px >= self.x && px <= self.x + self.w && py >= self.y && py <= self.y + self.h
     }
 
-    /// Bounds spring overshoot so the animated body never exceeds `max_px` past `target`
-    /// (ported from DankMaterialShell `FluidGeometry.js::limitOvershoot`).
-    #[allow(dead_code)]
-    pub fn limit_overshoot(self, target: Self, max_px: f32) -> Self {
-        let cap = max_px.max(0.0);
-        let left = self.x.clamp(target.x - cap, target.x + target.w + cap - 1.0);
-        let top = self.y.clamp(target.y - cap, target.y + target.h + cap - 1.0);
-        let right = (self.x + self.w).min(target.x + target.w + cap);
-        let bottom = (self.y + self.h).min(target.y + target.h + cap);
-        Self {
-            x: left,
-            y: top,
-            w: (right - left).max(1.0),
-            h: (bottom - top).max(1.0),
-        }
-    }
 
-    /// Content reveal opacity derived from spatial expansion ratio (`FluidGeometry.js::contentOpacity`).
-    pub fn content_opacity(self, target: Self) -> f32 {
-        let rw = self.w / target.w.max(1.0);
-        let rh = self.h / target.h.max(1.0);
-        ((rw.min(rh) - 0.45) / 0.55).clamp(0.0, 1.0)
-    }
 }
 
 /// 4D spatial spring for the morphing card geometry (`x, y, width, height`).

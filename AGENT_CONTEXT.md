@@ -1,5 +1,7 @@
 # AGENT_CONTEXT.md — Technical Context & Verification Blueprint for `thetalk`
 
+**Write the code so that the evolution of this app feels modular.** Read `AGENTS.md` and `docs/UI_ARCHITECTURE_AUDIT.md` before changing behavior; shared invariants take precedence over legacy instructions below.
+
 This file gives a local coding agent complete architectural, protocol, and debugging context for `thetalk` so it can build, verify on a live `niri` Wayland session, inspect screenshots, fix any host-specific edge cases, build the `.AppImage`, and push artifacts/logs directly back to GitHub.
 
 ---
@@ -37,7 +39,7 @@ When debugging or polishing anything locally, **never violate these user constra
 | File | Responsibility |
 | :--- | :--- |
 | `src/main.rs` | CLI parser, single-instance IPC forwarding (`toggle`, `show`, `hide`, `new`, `settings`, `send`, `quit`), `--render-preview <dir>`, `--self-test`, `--hidden`, `--window`, `--auto-quit-ms`. |
-| `src/wayland.rs` | `smithay-client-toolkit` `0.19.2` `calloop` event loop, `zwlr_layer_shell_v1` (`Layer::Top`, `Anchor::BOTTOM`, `exclusive_zone = -1`, namespace `"thetalk"`), XDG window fallback, `wl_shm` `SlotPool`, HiDPI `set_buffer_scale`, `ThemedPointer`, `get_keyboard_with_repeat`, per-frame `Region` input mask, and `OnDemand`/`None` focus transitions. |
+| `src/wayland.rs` | `smithay-client-toolkit` `0.19.2` `calloop` event loop, `zwlr_layer_shell_v1` (`Layer::Top`, `Anchor::BOTTOM`, `exclusive_zone = -1`, namespace `"thetalk"`), XDG window fallback, `wl_shm` `SlotPool`, HiDPI `set_buffer_scale`, `ThemedPointer`, `get_keyboard_with_repeat`, per-frame `Region` input mask, and explicit-summon remapping with OnDemand eligibility while visible. |
 | `src/state.rs` | `AppState`, UTF-8 cursor/selection `TextField`, `/` command menu, Settings state (`AppConfig`), conversation turns, `wants_keyboard_on_demand()`, clipboard (`wl-copy`/`wl-paste`/`xclip`/`xsel` + internal fallback). |
 | `src/render.rs` | HiDPI `tiny-skia` `0.11.4` + `cosmic-text` `0.14.2` renderer, embedded `Geist` & `Geist Mono` fonts, analytical Gaussian drop shadows, monochrome film grain (`GrainLut`), GFM block layout, continuous-sigma word frontier blur compositing, and deterministic `render_showcase_pngs()`. |
 | `src/markdown.rs` | `pulldown-cmark` `0.12.2` offset-aware GFM parser (`into_offset_iter()`), `==mark==` inline highlight splitter, code syntax highlighter, and byte-range mapping onto `FrontierWord` optical blur states. |
@@ -53,13 +55,16 @@ When debugging or polishing anything locally, **never violate these user constra
 
 ## 4. Exact `niri` Focus Mechanics (Reference for Debugging)
 
-In `YaLTeR/niri`:
-- `src/layer_shell.rs`: When a `Layer::Top` surface first maps (`was_unmapped == true`) with `KeyboardInteractivity::OnDemand`, `niri` grants initial summon focus (`can_receive_keyboard_focus() == true`).
-- `src/niri.rs` (`update_keyboard_focus`): Whenever `thetalk` commits `KeyboardInteractivity::None` (on `wl_keyboard::leave` or `Esc`), `niri` immediately drops `KeyboardFocus::Layer` and restores keyboard focus to `KeyboardFocus::Layout` (the active tiled window underneath).
-- `src/niri.rs` (`handle_focus_follows_mouse`): Because `thetalk` stays in `KeyboardInteractivity::None` across non-input regions of the card, moving the pointer across the floating chat card NEVER triggers `focus-follows-mouse` focus theft, and scrolling or clicking `Copy` on a code block leaves focus in the underlying window.
-- Hovering directly over an editable text input (`HitTarget::Input(_)`) pre-arms `KeyboardInteractivity::OnDemand` on the already-mapped surface (`was_unmapped == false`), which does NOT steal focus on hover, while allowing the very first left-click (`focus_layer_surface_if_on_demand`) to focus the input bar cleanly.
+Visible layers use OnDemand across the entire rounded card, not hovered-input
+eligibility. niri owns actual focus and reports it through keyboard enter/leave.
+Startup maps OnDemand; explicit later summons use a one-shot remap handshake.
+Clicking another app releases ownership without changing eligibility or
+requesting another summon. Escape always hides. Never use Exclusive.
 
-If on a specific `niri` version with aggressive `focus-follows-mouse` settings you observe hover over the input bar focusing without a click, tighten `AppState::wants_keyboard_on_demand()` in `src/state.rs` so `OnDemand` is set only when `summon_focus_requested || has_keyboard_focus` (since `handle_click` on `HitTarget::Input(_)` already sets `summon_focus_requested = true` on left-click!). Verify both click-to-focus and hover-passivity on the live compositor.
+See `docs/UI_ARCHITECTURE_AUDIT.md` for source references and live verification
+requirements. The previous hover-gating/None-on-leave policy was intentionally
+removed because it broke click-anywhere focus and conflated eligibility with
+ownership.
 
 ---
 

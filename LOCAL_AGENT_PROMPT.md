@@ -1,5 +1,7 @@
 # LOCAL_AGENT_PROMPT.md
 
+**Write the code so that the evolution of this app feels modular.** Read `AGENTS.md` and `docs/UI_ARCHITECTURE_AUDIT.md` before executing the legacy verification steps below.
+
 Copy and paste the prompt block below into your local coding agent (Claude Code, OpenCode, Codex CLI, Aider, or any local LLM agent with shell access on your `niri` Linux machine).
 
 ---
@@ -53,3 +55,7 @@ Follow these steps autonomously from start to finish without asking unnecessary 
 ## Current polish verification (2026-11-08)
 
 Work on `arena/fe7a9b52-thetalk` only. Cloud changes have NOT been compiled or live-verified (no cargo/rustc here). Run tests/build/self-test before packaging. Repeatedly interrupt chat → slash palette → compact → settings transitions; no destination-size snap or wrapping-driven height feedback should occur. Test at 60/120/144 Hz, including delayed frames; caret and optical focus must resume on monotonic elapsed time. Profile rounded shadow quadrature at 2× scale during streaming, inspect pill corners and bottom surface edge for clipping. Inspect long model chips: text must remain inside chip bounds. Re-run passive keyboard focus and pointer passthrough checks. Capture fresh screenshots/logs; do not treat old screenshots/AppImage as verification of this patch.
+
+## Latest shared-interaction refactor (supersedes old focus instructions)
+
+Visible card = OnDemand eligibility, not constant focus ownership. Startup and explicit summon must get keyboard; outside click yields it; hovering must not reclaim it. Click any chat area then type into composer. Escape always hides in ALL routes, preserving drafts/history and not stopping generation. Validate the null-buffer remap/configure handshake on repeated summons. Run the complete route-pair/interruption matrix in `docs/UI_ARCHITECTURE_AUDIT.md`; old screenshots/logs do not validate this refactor. Build from the latest remote commit on `arena/fe7a9b52-thetalk` only.
