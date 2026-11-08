@@ -235,7 +235,8 @@ pub fn draw_diffuse_rrect_shadow(
         // around a pill. Fixed Gaussian-weighted slices preserve curved ends.
         let r = (radius + spread).max(0.0).min((sx1 - sx0).min(sy1 - sy0) * 0.5);
         let mut slices = [(0.0_f32, 0.0_f32, 0.0_f32); 16];
-        for (i, slice) in slices.iter_mut().enumerate() {
+        let mut slice_count = 0;
+        for i in 0..16 {
             let z = -3.0 + (i as f32 + 0.5) * (6.0 / 16.0);
             let sample_y = fy + z * sigma;
             if sample_y < sy0 || sample_y > sy1 {
@@ -243,8 +244,18 @@ pub fn draw_diffuse_rrect_shadow(
             }
             let dy = (sy0 + r - sample_y).max(sample_y - (sy1 - r)).max(0.0);
             let inset = r - (r * r - dy * dy).max(0.0).sqrt();
-            *slice = (sx0 + inset, sx1 - inset,
-                (-0.5 * z * z).exp() * (6.0 / 16.0) / (2.0 * std::f32::consts::PI).sqrt());
+            let weight = (-0.5 * z * z).exp() * (6.0 / 16.0) / (2.0 * std::f32::consts::PI).sqrt();
+            let left = sx0 + inset;
+            let right = sx1 - inset;
+            // Most slices in the straight body have identical endpoints.
+            // Integrate their weights once instead of evaluating 16 erf pairs.
+            if let Some(existing) = slices[..slice_count].iter_mut()
+                .find(|slice| slice.0 == left && slice.1 == right) {
+                existing.2 += weight;
+            } else {
+                slices[slice_count] = (left, right, weight);
+                slice_count += 1;
+            }
         }
         let in_card_y = py >= inner_y0 && py < inner_y1;
         let row_off = (py as usize) * (pm_w as usize) * 4;
@@ -254,7 +265,7 @@ pub fn draw_diffuse_rrect_shadow(
                 continue;
             }
             let fx = px as f32 + 0.5;
-            let coverage: f32 = slices.iter().filter(|s| s.2 > 0.0).map(|&(left, right, weight)| {
+            let coverage: f32 = slices[..slice_count].iter().map(|&(left, right, weight)| {
                 weight * 0.5 * (fast_erf((right - fx) * inv_sqrt2_sigma)
                     - fast_erf((left - fx) * inv_sqrt2_sigma))
             }).sum();

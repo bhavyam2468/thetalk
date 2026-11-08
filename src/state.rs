@@ -21,6 +21,14 @@ pub enum Panel {
     Settings,
 }
 
+/// Shared horizontal overflow viewport for any wide Markdown component.
+#[derive(Debug, Clone)]
+pub struct ScrollRegion {
+    pub rect: LogicalRect,
+    pub key: (usize, usize),
+    pub max_x: f32,
+}
+
 /// Geometry constants (logical px)
 pub const SHADOW_PAD_X: f32 = 36.0;
 pub const SHADOW_PAD_TOP: f32 = 38.0;
@@ -307,6 +315,7 @@ pub struct ChatItem {
     pub streaming: bool,
     pub error: Option<String>,
     pub thinking_expanded: bool,
+    pub thinking_reveal: Spring,
     pub entrance: Spring,
 }
 
@@ -322,6 +331,7 @@ impl ChatItem {
             streaming: false,
             error: None,
             thinking_expanded: false,
+            thinking_reveal: Spring::new(0.0, SpringSpec::SCROLL),
             entrance,
         }
     }
@@ -338,6 +348,7 @@ impl ChatItem {
             streaming: true,
             error: None,
             thinking_expanded: false,
+            thinking_reveal: Spring::new(0.0, SpringSpec::SCROLL),
             entrance,
         }
     }
@@ -391,6 +402,8 @@ pub struct AppState {
     // Scroll physics for message viewport
     pub scroll_spring: Spring,
     pub max_scroll: f32,
+    pub block_scroll: std::collections::HashMap<(usize, usize), f32>,
+    pub scroll_regions: Vec<ScrollRegion>,
     pub user_scrolled_up: bool,
 
     // Inputs
@@ -459,6 +472,8 @@ impl AppState {
             desired_composer_height: BAR_MIN_HEIGHT,
             scroll_spring: Spring::new(0.0, SpringSpec::SCROLL),
             max_scroll: 0.0,
+            block_scroll: std::collections::HashMap::new(),
+            scroll_regions: Vec::new(),
             user_scrolled_up: false,
             composer: TextField::default(),
             focus_target: FocusTarget::Composer,
@@ -646,6 +661,8 @@ impl AppState {
             if msg.streaming {
                 any_stream_anim = true;
             }
+            msg.thinking_reveal.retarget(if msg.thinking_expanded { 1.0 } else { 0.0 });
+            if msg.thinking_reveal.advance(dt) { any_stream_anim = true; }
             if msg.entrance.advance(dt) {
                 any_stream_anim = true;
             }
@@ -772,6 +789,8 @@ impl AppState {
     pub fn reset_chat(&mut self) {
         self.stop_streaming();
         self.messages.clear();
+        self.block_scroll.clear();
+        self.scroll_regions.clear();
         self.composer.clear();
         self.scroll_spring.snap_to(0.0);
         self.max_scroll = 0.0;
@@ -924,6 +943,24 @@ impl AppState {
         }
     }
 
+    pub fn scroll_input(&mut self, dx: f32, dy: f32, direct: bool, shift: bool) {
+        let horizontal = if shift && dx.abs() < 0.01 { dy } else { dx };
+        if horizontal.abs() > 0.01 {
+            if let Some(region) = self.pointer_pos.and_then(|(x, y)|
+                self.scroll_regions.iter().rev().find(|r| r.rect.contains(x, y))) {
+                let offset = self.block_scroll.entry(region.key).or_default();
+                *offset = (*offset + horizontal).clamp(0.0, region.max_x);
+                return;
+            }
+        }
+        if shift { return; }
+        if direct {
+            let next = (self.scroll_spring.value + dy).clamp(0.0, self.max_scroll);
+            self.scroll_spring.snap_to(next);
+            self.user_scrolled_up = next < self.max_scroll - 24.0;
+        } else { self.scroll_by(dy); }
+    }
+
     pub fn scroll_by(&mut self, delta_px: f32) {
         if self.max_scroll <= 0.5 {
             return;
@@ -949,6 +986,9 @@ impl AppState {
             return;
         }
 
+        // Explicit card click is a focus request too. Some compositor/shell
+        // combinations do not deliver keyboard enter for blank layer content.
+        self.request_focus();
         if !self.settings_open {
             self.focus_target = FocusTarget::Composer;
         }
@@ -1341,9 +1381,9 @@ mod interaction_tests {
         app.has_keyboard_focus = false;
         app.handle_click(true, false);
         assert_eq!(app.focus_target, FocusTarget::Composer);
-        assert_eq!(app.summon_generation, generation);
-        app.show_overlay(true);
         assert_eq!(app.summon_generation, generation + 1);
+        app.show_overlay(true);
+        assert_eq!(app.summon_generation, generation + 2);
     }
 }
 

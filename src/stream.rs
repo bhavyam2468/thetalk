@@ -108,6 +108,7 @@ pub struct SmoothStream {
     last_chunk_secs: Option<f64>,
     carry_chars: f64,
     frontier: Vec<FrontierWord>,
+    pub reasoning_frontier: Vec<FrontierWord>,
 }
 
 impl Default for SmoothStream {
@@ -131,6 +132,7 @@ impl SmoothStream {
             last_chunk_secs: None,
             carry_chars: 0.0,
             frontier: Vec::with_capacity(MAX_FRONTIER_WORDS),
+            reasoning_frontier: Vec::with_capacity(MAX_FRONTIER_WORDS),
         }
     }
 
@@ -149,6 +151,7 @@ impl SmoothStream {
             last_chunk_secs: None,
             carry_chars: 0.0,
             frontier: Vec::new(),
+            reasoning_frontier: Vec::new(),
         }
     }
 
@@ -165,6 +168,7 @@ impl SmoothStream {
         self.last_chunk_secs = Some(now_secs);
         self.carry_chars = 0.0;
         self.frontier.clear();
+        self.reasoning_frontier.clear();
     }
 
     pub fn update_raw(&mut self, full_raw: &str, streaming: bool, now_secs: f64) {
@@ -175,6 +179,25 @@ impl SmoothStream {
         if self.reasoning_active && !split.reasoning_active {
             if let Some(t0) = self.reasoning_started_secs {
                 self.reasoning_duration_secs = Some((now_secs - t0).max(0.1));
+            }
+        }
+        let old_len = self.reasoning.as_deref().map(str::len).unwrap_or(0);
+        if let Some(text) = split.reasoning {
+            if text.len() < old_len { self.reasoning_frontier.clear(); }
+            let start = old_len.min(text.len());
+            if text.is_char_boundary(start) {
+                let mut offset = start;
+                for word in text[start..].split_inclusive(char::is_whitespace) {
+                    let end = offset + word.len();
+                    if !word.trim().is_empty() {
+                        self.reasoning_frontier.push(FrontierWord { start: offset, end, birth_secs: now_secs });
+                    }
+                    offset = end;
+                }
+            }
+            if self.reasoning_frontier.len() > MAX_FRONTIER_WORDS {
+                let excess = self.reasoning_frontier.len() - MAX_FRONTIER_WORDS;
+                self.reasoning_frontier.drain(..excess);
             }
         }
         self.reasoning = split.reasoning.map(|s| s.to_string());
@@ -233,6 +256,7 @@ impl SmoothStream {
 
         self.frontier
             .retain(|w| (now_secs - w.birth_secs) < WORD_FOCUS_DURATION);
+        self.reasoning_frontier.retain(|w| now_secs - w.birth_secs < 0.24);
 
         self.is_animating(now_secs)
     }
@@ -357,6 +381,7 @@ impl SmoothStream {
 
     pub fn is_animating(&self, now_secs: f64) -> bool {
         self.streaming
+            || !self.reasoning_frontier.is_empty()
             || self.revealed_bytes < self.raw_answer.len()
             || self
                 .frontier

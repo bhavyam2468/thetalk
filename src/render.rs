@@ -17,6 +17,8 @@ use cosmic_text::{
     SwashCache, SwashContent, Weight, Wrap,
 };
 use std::path::Path;
+use std::rc::Rc;
+use std::hash::{Hash, Hasher};
 use tiny_skia::{
     Color, FillRule, LineCap, LineJoin, Mask, Paint, PathBuilder, Pixmap, Stroke, Transform,
 };
@@ -40,6 +42,8 @@ pub struct Renderer {
     panel_transition: PanelTransition,
     previous_panel: Option<PanelSnapshot>,
     outgoing_panel: Option<PanelSnapshot>,
+    shadow_cache: Option<([u32; 7], Pixmap)>,
+    message_cache: Vec<(usize, u64, Rc<ShapedMessage>)>,
 }
 
 #[derive(Clone, Copy)]
@@ -100,6 +104,7 @@ enum ShapedBlock {
         body_rows: Vec<(Vec<Buffer>, f32)>,
         top_gap: f32,
         msg_idx: usize,
+        block_idx: usize,
     },
     Rule {
         top_gap: f32,
@@ -109,14 +114,21 @@ enum ShapedBlock {
 struct ShapedMessage {
     msg_idx: usize,
     role: Role,
-    entrance: f32,
     user_buf: Option<(Buffer, f32, f32)>,
     thinking_pill: Option<(Buffer, Option<(Buffer, f32)>)>,
     blocks: Vec<ShapedBlock>,
-    frontier_states: Vec<WordFocusState>,
     waiting_ttft: bool,
     error_buf: Option<(Buffer, f32)>,
     total_height: f32,
+}
+
+impl ShapedMessage {
+    fn height(&self, state: &AppState) -> f32 {
+        let hidden = self.thinking_pill.as_ref().and_then(|(_, body)| body.as_ref())
+            .map(|(_, h)| (h + 10.0) * (1.0 - state.messages[self.msg_idx].thinking_reveal.value.clamp(0.0, 1.0)))
+            .unwrap_or(0.0);
+        (self.total_height - hidden).max(22.0)
+    }
 }
 
 impl Renderer {
@@ -153,6 +165,8 @@ impl Renderer {
             panel_transition: PanelTransition::new(),
             previous_panel: None,
             outgoing_panel: None,
+            message_cache: Vec::new(),
+            shadow_cache: None,
         }
     }
 
@@ -166,12 +180,14 @@ impl Renderer {
             self.mask = Mask::new(pw, ph).expect("mask resize");
             self.previous_panel = None;
             self.outgoing_panel = None;
+            self.shadow_cache = None;
         }
     }
 
     pub fn render(&mut self, state: &mut AppState) {
         self.pixmap.fill(Color::TRANSPARENT);
         state.hit_zones.clear();
+        state.scroll_regions.clear();
 
         let presence = state.presence_spring.value.clamp(0.0, 1.0);
         if !state.visible && presence <= 0.01 {
@@ -215,7 +231,7 @@ impl Renderer {
         // Measure at the destination width, not a moving spring value. Otherwise
         // line wrapping continually retargets height during a width morph.
         let inner_w = (target_w - 44.0).max(200.0);
-        let mut shaped_msgs: Vec<ShapedMessage> = Vec::new();
+        let mut shaped_msgs: Vec<Rc<ShapedMessage>> = Vec::new();
         let mut messages_total_h = 0.0f32;
 
         if panel == Panel::Settings {
@@ -226,7 +242,7 @@ impl Renderer {
         } else if panel == Panel::Conversation {
             let mut y_acc = 18.0f32;
             for idx in 0..state.messages.len() {
-                let shaped = self.shape_message(
+                let shaped = self.cached_message(
                     &state.messages[idx],
                     idx,
                     inner_w,
@@ -234,7 +250,7 @@ impl Renderer {
                     &theme,
                     state.copied_badge,
                 );
-                y_acc += shaped.total_height + 18.0;
+                y_acc += shaped.height(state) + 18.0;
                 shaped_msgs.push(shaped);
             }
             messages_total_h = y_acc + 4.0;
@@ -250,33 +266,24 @@ impl Renderer {
         card.y += (1.0 - presence) * 14.0;
         let radius = state.card_radius.value.clamp(8.0, 28.0);
 
-        // 4. Analytical Gaussian float shadow + contact shadow
-        {
-            let mut pm_mut = self.pixmap.as_mut();
-            draw_diffuse_rrect_shadow(
-                &mut pm_mut,
-                card.x * scale,
-                card.y * scale,
-                card.w * scale,
-                card.h * scale,
-                radius * scale,
-                3.0 * scale,
-                8.0 * scale,
-                theme.shadow_alpha * presence,
-                (0, 0, 0),
-            );
-            draw_diffuse_rrect_shadow(
-                &mut pm_mut,
-                card.x * scale,
-                card.y * scale,
-                card.w * scale,
-                card.h * scale,
-                radius * scale,
-                1.0 * scale,
-                2.5 * scale,
-                theme.shadow_alpha * 0.42 * presence,
-                (0, 0, 0),
-            );
+        // Shadow is a low-frequency signal: rasterize once in logical pixels,
+        // cache while stationary, and bilinearly sample at output scale. Text
+        // and card edges remain native-resolution. This bounds HiDPI blur cost.
+        let key = [card.x.to_bits(), card.y.to_bits(), card.w.to_bits(), card.h.to_bits(),
+            radius.to_bits(), theme.shadow_alpha.to_bits(), self.pixmap.height()];
+        if self.shadow_cache.as_ref().map(|(old, _)| *old) != Some(key) {
+            let mut shadow = Pixmap::new((self.pixmap.width() as f32 / scale).ceil() as u32,
+                (self.pixmap.height() as f32 / scale).ceil() as u32).expect("shadow surface");
+            for (offset, sigma, alpha) in [(3.0, 8.0, theme.shadow_alpha), (1.0, 2.5, theme.shadow_alpha * 0.42)] {
+                draw_diffuse_rrect_shadow(&mut shadow.as_mut(), card.x, card.y, card.w, card.h,
+                    radius, offset, sigma, alpha, (0,0,0));
+            }
+            self.shadow_cache = Some((key, shadow));
+        }
+        if let Some((_, shadow)) = &self.shadow_cache {
+            self.pixmap.draw_pixmap(0, 0, shadow.as_ref(), &tiny_skia::PixmapPaint {
+                opacity: presence, quality: tiny_skia::FilterQuality::Bilinear, ..Default::default()
+            }, Transform::from_scale(scale, scale), None);
         }
 
         // 5. Card clip mask + Quiet Paper `float` fill + monochrome analog film grain
@@ -320,6 +327,7 @@ impl Renderer {
                 x1: ((card.x + card.w - 1.0) * scale).ceil() as i32,
                 y1: (composer_top * scale).floor() as i32,
             };
+            self.restrict_mask(above_clip);
             let ctx = DrawContext {
                 scale,
                 clip: above_clip,
@@ -364,6 +372,13 @@ impl Renderer {
             );
         } else {
             state.max_scroll = 0.0;
+        }
+
+        // Restore rounded card clip after the panel's stricter viewport.
+        self.mask.clear();
+        if let Some(path) = build_rrect_path(card.x * scale, card.y * scale,
+            card.w * scale, card.h * scale, radius * scale) {
+            self.mask.fill_path(&path, FillRule::Winding, true, Transform::identity());
         }
 
         // 7. Composer Input Bar (zero placeholders, zero tooltips, pure finished surface)
@@ -437,6 +452,17 @@ impl Renderer {
             pixels.extend_from_slice(&self.pixmap.data()[(y * pw + x0) * 4..(y * pw + x1) * 4]);
         }
         self.previous_panel = Some(PanelSnapshot { width: w, height: h, pixels });
+    }
+
+    fn restrict_mask(&mut self, clip: ClipBox) {
+        let w = self.mask.width() as usize;
+        let h = self.mask.height() as usize;
+        let x0 = clip.x0.clamp(0, w as i32) as usize;
+        let x1 = clip.x1.clamp(x0 as i32, w as i32) as usize;
+        for (y, row) in self.mask.data_mut().chunks_exact_mut(w).take(h).enumerate() {
+            if (y as i32) < clip.y0 || (y as i32) >= clip.y1 { row.fill(0); }
+            else { row[..x0].fill(0); row[x1..].fill(0); }
+        }
     }
 
     fn apply_card_grain(&mut self, card: LogicalRect, grain_amount: f32) {
@@ -1123,6 +1149,40 @@ impl Renderer {
         }
     }
 
+    fn cached_message(&mut self, msg: &ChatItem, msg_idx: usize, inner_w: f32,
+        now: f64, theme: &Theme, copied: Option<(usize, usize, f64)>) -> Rc<ShapedMessage> {
+        let mut hash = std::collections::hash_map::DefaultHasher::new();
+        msg_idx.hash(&mut hash);
+        inner_w.to_bits().hash(&mut hash);
+        theme.fg.r.hash(&mut hash); // theme is one of two immutable palettes
+        (msg.role == Role::User).hash(&mut hash);
+        if msg.role == Role::User { msg.raw_content.hash(&mut hash); }
+        else { msg.stream.shown_text().hash(&mut hash); }
+        msg.stream.reasoning.hash(&mut hash);
+        msg.stream.reasoning_active.hash(&mut hash);
+        msg.stream.reasoning_duration_secs.map(f64::to_bits).hash(&mut hash);
+        msg.stream.is_live().hash(&mut hash);
+        msg.streaming.hash(&mut hash);
+        msg.thinking_expanded.hash(&mut hash);
+        msg.error.hash(&mut hash);
+        copied.map(|(m,b,expiry)| (m,b,now < expiry)).hash(&mut hash);
+        for word in msg.stream.frontier().iter().chain(&msg.stream.reasoning_frontier) {
+            word.start.hash(&mut hash); word.end.hash(&mut hash); word.birth_secs.to_bits().hash(&mut hash);
+        }
+        let key = hash.finish();
+        if let Some((_, _, scene)) = self.message_cache.iter().find(|(index, k, _)| *index == msg_idx && *k == key) {
+            return Rc::clone(scene);
+        }
+        let scene = Rc::new(self.shape_message(msg, msg_idx, inner_w, now, theme, copied));
+        if let Some(entry) = self.message_cache.iter_mut().find(|(index, _, _)| *index == msg_idx) {
+            *entry = (msg_idx, key, Rc::clone(&scene));
+        } else {
+            if self.message_cache.len() >= 128 { self.message_cache.remove(0); }
+            self.message_cache.push((msg_idx, key, Rc::clone(&scene)));
+        }
+        scene
+    }
+
     fn shape_message(
         &mut self,
         msg: &ChatItem,
@@ -1132,7 +1192,6 @@ impl Renderer {
         theme: &Theme,
         copied_badge: Option<(usize, usize, f64)>,
     ) -> ShapedMessage {
-        let entrance = msg.entrance.value.clamp(0.0, 1.0);
 
         if msg.role == Role::User {
             let max_bubble_w = (inner_w * 0.78).max(160.0);
@@ -1151,11 +1210,9 @@ impl Renderer {
             return ShapedMessage {
                 msg_idx,
                 role: Role::User,
-                entrance,
                 user_buf: Some((buf, bubble_w, bubble_h)),
                 thinking_pill: None,
                 blocks: Vec::new(),
-                frontier_states: Vec::new(),
                 waiting_ttft: false,
                 error_buf: None,
                 total_height: bubble_h,
@@ -1181,15 +1238,14 @@ impl Renderer {
             };
             let (pbuf, _) =
                 self.shape_plain_field(&label, 12.0, 17.0, 240.0, theme.muted, false, Wrap::None);
-            let expanded_body = if msg.thinking_expanded && !think_text.trim().is_empty() {
-                let (tbuf, th) = self.shape_plain_field(
-                    think_text.trim(),
+            let expanded_body = if !think_text.trim().is_empty() {
+                let spans = reasoning_spans(think_text, &msg.stream.reasoning_frontier, theme.muted);
+                let (tbuf, th) = self.shape_rich_spans(
+                    &spans,
                     13.0,
                     20.0,
                     inner_w - 18.0,
                     theme.muted,
-                    false,
-                    Wrap::WordOrGlyph,
                 );
                 y_h += th + 10.0;
                 Some((tbuf, th))
@@ -1206,7 +1262,7 @@ impl Renderer {
         let ParsedMarkdown {
             blocks: md_blocks,
             links: _,
-            frontier_states,
+            frontier_states: _,
         } = parse_markdown(
             visible_md,
             msg.stream.is_live(),
@@ -1325,7 +1381,7 @@ impl Renderer {
                         Wrap::None,
                     );
                     let (code_buf, ch) =
-                        self.shape_rich_spans(spans, 12.8, 19.5, inner_w - 26.0, theme.fg);
+                        self.shape_rich_spans_wrapped(spans, 12.8, 19.5, inner_w - 26.0, theme.fg, Wrap::None);
                     let card_code_h = ch.max(19.5) + 20.0;
                     y_h += gap + header_h + card_code_h;
                     shaped_blocks.push(ShapedBlock::Code {
@@ -1346,8 +1402,12 @@ impl Renderer {
                         .len()
                         .max(rows.iter().map(|r| r.len()).max().unwrap_or(1))
                         .max(1);
-                    let col_w = (inner_w / (cols as f32)).max(60.0);
-                    let col_widths = vec![col_w; cols];
+                    let col_widths: Vec<f32> = (0..cols).map(|c| {
+                        let natural = headers.get(c).into_iter().chain(rows.iter().filter_map(|r| r.get(c)))
+                            .map(|spans| spans.iter().map(|s| s.text.chars().count()).sum::<usize>())
+                            .max().unwrap_or(0) as f32 * 7.2 + 20.0;
+                        (inner_w / cols as f32).max(natural.clamp(88.0, 360.0))
+                    }).collect();
 
                     let mut header_cells = Vec::with_capacity(cols);
                     let mut hh = 20.0f32;
@@ -1355,7 +1415,7 @@ impl Renderer {
                         let empty: Vec<RichSpan> = Vec::new();
                         let sp = headers.get(c).unwrap_or(&empty);
                         let (cbuf, ch) =
-                            self.shape_rich_spans(sp, 13.0, 19.0, col_w - 16.0, theme.fg);
+                            self.shape_rich_spans(sp, 13.0, 19.0, col_widths[c] - 16.0, theme.fg);
                         hh = hh.max(ch);
                         header_cells.push(cbuf);
                     }
@@ -1370,7 +1430,7 @@ impl Renderer {
                             let empty: Vec<RichSpan> = Vec::new();
                             let sp = row.get(c).unwrap_or(&empty);
                             let (cbuf, ch) =
-                                self.shape_rich_spans(sp, 13.0, 19.0, col_w - 16.0, theme.fg);
+                                self.shape_rich_spans(sp, 13.0, 19.0, col_widths[c] - 16.0, theme.fg);
                             rh = rh.max(ch);
                             rbufs.push(cbuf);
                         }
@@ -1386,6 +1446,7 @@ impl Renderer {
                         body_rows,
                         top_gap: gap,
                         msg_idx,
+                        block_idx: b_idx,
                     });
                 }
                 MdBlock::Rule => {
@@ -1424,22 +1485,45 @@ impl Renderer {
         ShapedMessage {
             msg_idx,
             role: Role::Assistant,
-            entrance,
             user_buf: None,
             thinking_pill,
             blocks: shaped_blocks,
-            frontier_states,
             waiting_ttft,
             error_buf,
             total_height: y_h.max(22.0),
         }
     }
 
+    /// Shared horizontal viewport used by tables and code. Horizontal touchpad
+    /// gestures and Shift+wheel scroll only the hovered component.
+    fn overflow_viewport(&mut self, state: &mut AppState, key: (usize, usize), rect: LogicalRect,
+        content_w: f32, ctx: DrawContext) -> (f32, DrawContext) {
+        let max_x = (content_w - rect.w).max(0.0);
+        let offset = state.block_scroll.entry(key).or_default();
+        *offset = (*offset).clamp(0.0, max_x);
+        let value = *offset;
+        let clip = ctx.clip.intersect(ClipBox {
+            x0: (rect.x * ctx.scale).ceil() as i32, y0: (rect.y * ctx.scale).ceil() as i32,
+            x1: ((rect.x + rect.w) * ctx.scale).floor() as i32,
+            y1: ((rect.y + rect.h) * ctx.scale).floor() as i32,
+        });
+        if max_x > 0.5 && clip.x1 > clip.x0 && clip.y1 > clip.y0 {
+            state.scroll_regions.push(crate::state::ScrollRegion {
+                key, max_x, rect: LogicalRect::new(clip.x0 as f32 / ctx.scale, clip.y0 as f32 / ctx.scale,
+                    (clip.x1 - clip.x0) as f32 / ctx.scale, (clip.y1 - clip.y0) as f32 / ctx.scale),
+            });
+            let thumb_w = (rect.w * rect.w / content_w).max(24.0).min(rect.w);
+            self.fill_rrect_logical(rect.x + (rect.w - thumb_w) * value / max_x, rect.y + rect.h - 2.0,
+                thumb_w, 2.0, 1.0, state.theme.muted.with_alpha(ctx.alpha_mul * 0.35), true);
+        }
+        (value, DrawContext { clip, ..ctx })
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn draw_messages_viewport(
         &mut self,
         state: &mut AppState,
-        shaped_msgs: &[ShapedMessage],
+        shaped_msgs: &[Rc<ShapedMessage>],
         card_x: f32,
         card_y: f32,
         card_w: f32,
@@ -1456,18 +1540,22 @@ impl Renderer {
         let mut cur_y = card_y + 18.0 - scroll_y;
 
         for sm in shaped_msgs {
-            let msg_bottom = cur_y + sm.total_height;
+            let message_h = sm.height(state);
+            let entrance = state.messages[sm.msg_idx].entrance.value.clamp(0.0, 1.0);
+            let frontier_states: Vec<_> = state.messages[sm.msg_idx].stream.frontier().iter()
+                .filter_map(|word| word.evaluate(now)).collect();
+            let msg_bottom = cur_y + message_h;
             if msg_bottom < card_y - 24.0 || cur_y > card_y + viewport_h + 24.0 {
-                cur_y += sm.total_height + 18.0;
+                cur_y += message_h + 18.0;
                 continue;
             }
 
-            let slide_y = (1.0 - sm.entrance) * 8.0;
+            let slide_y = (1.0 - entrance) * 8.0;
             let mut my = cur_y + slide_y;
             let mctx = DrawContext {
                 scale: ctx.scale,
                 clip: ctx.clip,
-                alpha_mul: ctx.alpha_mul * sm.entrance,
+                alpha_mul: ctx.alpha_mul * entrance,
             };
 
             if sm.role == Role::User {
@@ -1493,7 +1581,7 @@ impl Renderer {
                     );
                     self.draw_buffer_runs(buf, bx + 14.0, my + 9.0, &[], None, state, mctx);
                 }
-                cur_y += sm.total_height + 18.0;
+                cur_y += message_h + 18.0;
                 continue;
             }
 
@@ -1519,16 +1607,27 @@ impl Renderer {
                 my += 28.0;
 
                 if let Some((tbuf, th)) = expanded_opt {
+                    let visible_h = (*th + 10.0) * state.messages[sm.msg_idx].thinking_reveal.value.clamp(0.0, 1.0);
                     self.fill_rect_logical(
                         pad_x + 3.0,
                         my,
                         2.0,
-                        *th,
-                        theme.accent.with_alpha(mctx.alpha_mul * 0.55),
+                        th.min(visible_h),
+                        theme.accent.with_alpha(mctx.alpha_mul * 0.40),
                         true,
                     );
-                    self.draw_buffer_runs(tbuf, pad_x + 14.0, my, &[], None, state, mctx);
-                    my += *th + 10.0;
+                    let reasoning_states: Vec<_> = state.messages[sm.msg_idx].stream.reasoning_frontier.iter().map(|word| {
+                        let t = ((now - word.birth_secs) / 0.24).clamp(0.0, 1.0) as f32;
+                        WordFocusState { sigma_logical: 0.0, opacity: 0.45 + 0.55 * t * (2.0 - t), offset_y: 0.6 * (1.0 - t) }
+                    }).collect();
+                    let body_ctx = DrawContext { clip: mctx.clip.intersect(ClipBox {
+                        x0: ((pad_x + 14.0) * ctx.scale).floor() as i32,
+                        y0: (my * ctx.scale).floor() as i32,
+                        x1: ((pad_x + inner_w) * ctx.scale).ceil() as i32,
+                        y1: ((my + visible_h) * ctx.scale).floor() as i32,
+                    }), ..mctx };
+                    self.draw_buffer_runs(tbuf, pad_x + 14.0, my, &reasoning_states, None, state, body_ctx);
+                    my += visible_h;
                 }
             }
 
@@ -1627,7 +1726,7 @@ impl Renderer {
                             buffer,
                             pad_x + *indent_x,
                             my,
-                            &sm.frontier_states,
+                            &frontier_states,
                             Some(*msg_idx),
                             state,
                             mctx,
@@ -1722,14 +1821,17 @@ impl Renderer {
                             state,
                             mctx,
                         );
+                        let (offset, code_ctx) = self.overflow_viewport(state, (*msg_idx, *block_idx),
+                            LogicalRect::new(pad_x + 13.0, my + *header_h + 8.0, inner_w - 26.0, *code_h - 12.0),
+                            measure_buffer_width(code_buf), mctx);
                         self.draw_buffer_runs(
                             code_buf,
-                            pad_x + 13.0,
+                            pad_x + 13.0 - offset,
                             my + *header_h + 10.0,
-                            &[],
+                            &frontier_states,
                             None,
                             state,
-                            mctx,
+                            code_ctx,
                         );
                         my += total_ch;
                     }
@@ -1740,6 +1842,7 @@ impl Renderer {
                         body_rows,
                         top_gap,
                         msg_idx,
+                        block_idx,
                     } => {
                         my += *top_gap;
                         let body_h: f32 = body_rows.iter().map(|(_, h)| *h).sum();
@@ -1771,16 +1874,19 @@ impl Renderer {
                             true,
                         );
 
-                        let mut cx = pad_x;
+                        let content_w: f32 = col_widths.iter().sum();
+                        let (offset, table_ctx) = self.overflow_viewport(state, (*msg_idx, *block_idx),
+                            LogicalRect::new(pad_x + 1.0, my + 1.0, inner_w - 2.0, total_th - 2.0), content_w, mctx);
+                        let mut cx = pad_x - offset;
                         for (c, cbuf) in header_cells.iter().enumerate() {
                             self.draw_buffer_runs(
                                 cbuf,
                                 cx + 8.0,
                                 my + 6.0,
-                                &sm.frontier_states,
+                                &frontier_states,
                                 Some(*msg_idx),
                                 state,
-                                mctx,
+                                table_ctx,
                             );
                             cx += col_widths.get(c).copied().unwrap_or(80.0);
                         }
@@ -1794,16 +1900,16 @@ impl Renderer {
                                 theme.line.with_alpha(mctx.alpha_mul),
                                 true,
                             );
-                            let mut rcx = pad_x;
+                            let mut rcx = pad_x - offset;
                             for (c, cbuf) in row_bufs.iter().enumerate() {
                                 self.draw_buffer_runs(
                                     cbuf,
                                     rcx + 8.0,
                                     ry + 5.5,
-                                    &sm.frontier_states,
+                                    &frontier_states,
                                     Some(*msg_idx),
                                     state,
-                                    mctx,
+                                    table_ctx,
                                 );
                                 rcx += col_widths.get(c).copied().unwrap_or(80.0);
                             }
@@ -1896,7 +2002,7 @@ impl Renderer {
                 self.draw_buffer_runs(&sbuf, sbtn.x + 10.0, sbtn.y + 4.0, &[], None, state, mctx);
             }
 
-            cur_y += sm.total_height + 18.0;
+            cur_y += message_h + 18.0;
         }
 
         if state.max_scroll > 2.0 {
@@ -1942,16 +2048,22 @@ impl Renderer {
         (buffer, (lines as f32) * line_height)
     }
 
-    fn shape_rich_spans(
+    fn shape_rich_spans(&mut self, spans: &[RichSpan], font_size: f32, line_height: f32,
+        max_w: f32, color: Rgba) -> (Buffer, f32) {
+        self.shape_rich_spans_wrapped(spans, font_size, line_height, max_w, color, Wrap::WordOrGlyph)
+    }
+
+    fn shape_rich_spans_wrapped(
         &mut self,
         spans: &[RichSpan],
         font_size: f32,
         line_height: f32,
         max_w: f32,
         default_color: Rgba,
+        wrap: Wrap,
     ) -> (Buffer, f32) {
         let mut buffer = Buffer::new(&mut self.font_system, Metrics::new(font_size, line_height));
-        buffer.set_wrap(&mut self.font_system, Wrap::WordOrGlyph);
+        buffer.set_wrap(&mut self.font_system, wrap);
         buffer.set_size(&mut self.font_system, Some(max_w.max(20.0)), None);
         let base_attrs = Attrs::new()
             .family(Family::SansSerif)
@@ -2569,7 +2681,7 @@ impl Renderer {
                 ..Stroke::default()
             };
             self.pixmap
-                .stroke_path(&path, &paint, &stroke, Transform::identity(), None);
+                .stroke_path(&path, &paint, &stroke, Transform::identity(), Some(&self.mask));
         }
     }
 
@@ -2808,4 +2920,23 @@ pub fn build_rrect_path(x: f32, y: f32, w: f32, h: f32, r: f32) -> Option<tiny_s
     pb.cubic_to(x, y + r - c, x + r - c, y, x + r, y);
     pb.close();
     pb.finish()
+}
+
+fn reasoning_spans(text: &str, frontier: &[crate::stream::FrontierWord], color: Rgba) -> Vec<RichSpan> {
+    let mut spans = Vec::new();
+    let mut offset = 0;
+    for (index, word) in frontier.iter().enumerate() {
+        if word.start < offset || word.end > text.len() { continue; }
+        if word.start > offset {
+            spans.push(RichSpan { text: text[offset..word.start].into(), bold: false, italic: false,
+                monospace: false, color, meta: 0 });
+        }
+        spans.push(RichSpan { text: text[word.start..word.end].into(), bold: false, italic: false,
+            monospace: false, color, meta: crate::markdown::pack_meta(0, None, Some(index)) });
+        offset = word.end;
+    }
+    if offset < text.len() {
+        spans.push(RichSpan { text: text[offset..].into(), bold: false, italic: false, monospace: false, color, meta: 0 });
+    }
+    spans
 }

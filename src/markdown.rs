@@ -150,6 +150,7 @@ pub fn parse_markdown(
 
     let mut in_code_block: Option<String> = None;
     let mut code_buf = String::new();
+    let mut code_frontier = Vec::new();
 
     let mut in_table = false;
     let mut in_table_head = false;
@@ -225,6 +226,7 @@ pub fn parse_markdown(
                     };
                     in_code_block = Some(lang);
                     code_buf.clear();
+                    code_frontier.clear();
                 }
                 Tag::List(start_num) => {
                     if !current_spans.is_empty() {
@@ -307,7 +309,7 @@ pub fn parse_markdown(
                 TagEnd::CodeBlock => {
                     let lang = in_code_block.take().unwrap_or_default();
                     let raw = code_buf.trim_end_matches('\n').to_string();
-                    let highlighted = highlight_code(&raw, &lang, theme);
+                    let highlighted = map_code_frontier(highlight_code(&raw, &lang, theme), &code_frontier);
                     let is_last_open = streaming && range.end >= healed.len().saturating_sub(4);
                     blocks.push(MdBlock::CodeBlock {
                         lang,
@@ -359,6 +361,14 @@ pub fn parse_markdown(
             }
             Event::Text(text) => {
                 if in_code_block.is_some() {
+                    for &(start, end, index) in &active_words {
+                        let a = start.max(range.start);
+                        let b = end.min(range.end).min(range.start + text.len());
+                        if b > a {
+                            code_frontier.push((code_buf.len() + a - range.start,
+                                code_buf.len() + b - range.start, index));
+                        }
+                    }
                     code_buf.push_str(&text);
                 } else {
                     let base_color = if blockquote_depth > 0 {
@@ -433,7 +443,7 @@ pub fn parse_markdown(
 
     if let Some(lang) = in_code_block.take() {
         let raw = code_buf.trim_end_matches('\n').to_string();
-        let spans = highlight_code(&raw, &lang, theme);
+        let spans = map_code_frontier(highlight_code(&raw, &lang, theme), &code_frontier);
         blocks.push(MdBlock::CodeBlock {
             lang,
             raw_code: raw,
@@ -621,6 +631,34 @@ fn emit_words_segment(
             });
         }
     }
+}
+
+/// Preserve syntax colours while projecting source-byte frontier ranges into
+/// code-local offsets. Code and prose then share the same optical compositor.
+fn map_code_frontier(spans: Vec<RichSpan>, words: &[(usize, usize, usize)]) -> Vec<RichSpan> {
+    let mut out = Vec::new();
+    let mut offset = 0;
+    for span in spans {
+        let end = offset + span.text.len();
+        let mut boundaries = vec![0, span.text.len()];
+        for &(a, b, _) in words {
+            for point in [a, b] {
+                if point > offset && point < end && span.text.is_char_boundary(point - offset) {
+                    boundaries.push(point - offset);
+                }
+            }
+        }
+        boundaries.sort_unstable(); boundaries.dedup();
+        for pair in boundaries.windows(2) {
+            let mut part = span.clone();
+            part.text = span.text[pair[0]..pair[1]].into();
+            let index = find_overlapping_frontier(offset + pair[0], offset + pair[1], words);
+            part.meta = pack_meta(0, None, index);
+            out.push(part);
+        }
+        offset = end;
+    }
+    out
 }
 
 /// Lightweight, zero-dependency Quiet Paper syntax tokenizer for fenced code blocks.

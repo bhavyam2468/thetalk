@@ -40,8 +40,8 @@ impl SpringSpec {
 
     /// Smooth kinetic scroll spring (critically damped, responsive).
     pub const SCROLL: Self = Self {
-        stiffness: 620.0,
-        damping: 50.0,
+        stiffness: 1600.0,
+        damping: 80.0,
         mass: 1.0,
     };
 }
