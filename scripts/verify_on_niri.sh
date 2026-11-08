@@ -42,6 +42,9 @@ echo "==> [5/7] Generating Deterministic 2x HiDPI Showcase Screenshots"
 ./target/release/thetalk --render-preview "$ROOT_DIR/assets/screenshots"
 ls -lh "$ROOT_DIR/assets/screenshots"/*.png
 
+echo "==> Headless release renderer stress benchmark (CPU time, NOT compositor FPS)"
+./target/release/thetalk --benchmark-render | tee "$ROOT_DIR/logs/render-benchmark.jsonl"
+
 echo ""
 echo "==> [6/7] Live Wayland / niri Compositor & Focus-Preservation Test"
 take_wayland_shot() {

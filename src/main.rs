@@ -36,6 +36,7 @@ fn try_main() -> Result<(), String> {
     let mut auto_quit_ms: Option<u64> = None;
     let mut render_preview_dir: Option<PathBuf> = None;
     let mut run_self_test = false;
+    let mut benchmark_render = false;
     let mut ipc_cmd: Option<IpcCommand> = None;
 
     let mut i = 0usize;
@@ -52,6 +53,7 @@ fn try_main() -> Result<(), String> {
             "--window" => force_window = true,
             "--hidden" => start_hidden = true,
             "--self-test" => run_self_test = true,
+            "--benchmark-render" => benchmark_render = true,
             "--render-preview" => {
                 i += 1;
                 let dir = args
@@ -96,6 +98,7 @@ fn try_main() -> Result<(), String> {
         i += 1;
     }
 
+    if benchmark_render { return Renderer::benchmark_render(); }
     if run_self_test {
         return execute_self_test();
     }
@@ -214,7 +217,8 @@ COMMANDS:
 OPTIONS:
     --hidden            Launch daemon hidden in background (instant toggle ready)
     --window            Force XDG window fallback instead of zwlr_layer_shell_v1
-    --render-preview D  Render 4 HiDPI showcase PNGs headlessly into directory D
+    --render-preview D  Render HiDPI showcase and wide-content stress PNGs headlessly into directory D
+    --benchmark-render  Report headless release-render p50/p95 timings as JSONL
     --self-test         Run built-in physics, markdown, font & blur smoke tests
     --auto-quit-ms N    Exit automatically after N ms (for automated E2E tests)
     -h, --help          Print this help

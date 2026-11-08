@@ -30,3 +30,9 @@ panic = "abort"
 
 [profile.dev]
 opt-level = 1
+
+# Keep release optimizations while retaining symbols for local CPU/heap profiles.
+[profile.profiling]
+inherits = "release"
+debug = 1
+strip = "none"

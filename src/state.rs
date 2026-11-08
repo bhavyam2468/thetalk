@@ -953,7 +953,7 @@ impl AppState {
                 return;
             }
         }
-        if shift { return; }
+        if shift || self.panel() != Panel::Conversation { return; }
         if direct {
             let next = (self.scroll_spring.value + dy).clamp(0.0, self.max_scroll);
             self.scroll_spring.snap_to(next);

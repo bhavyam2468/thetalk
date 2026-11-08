@@ -2766,6 +2766,63 @@ impl Renderer {
         }
     }
 
+    /// Reproducible CPU-render benchmark, not a compositor FPS claim. Use a
+    /// release build and compare p50/p95 on the same hardware and scale.
+    pub fn benchmark_render() -> Result<(), String> {
+        for scale in [1.0, 2.0] {
+            let mut renderer = Self::new(scale);
+            let mut config = AppConfig::default();
+            config.model = "benchmark-no-network".into();
+            let mut state = AppState::new(config);
+            let markdown = stress_markdown();
+            for _ in 0..12 {
+                state.messages.push(ChatItem::new_user("Markdown stress fixture".into()));
+                let mut reply = ChatItem::new_assistant_streaming(0.0);
+                reply.stream = crate::stream::SmoothStream::from_completed(&markdown);
+                reply.raw_content = markdown.clone();
+                reply.streaming = false;
+                reply.entrance.snap_to(1.0);
+                state.messages.push(reply);
+            }
+            let mut simulated_time = 0.0;
+            for scenario in ["steady", "route-reversal", "scroll", "thinking", "streaming"] {
+                let mut samples = Vec::new();
+                for frame in 0..96 {
+                    simulated_time += 1.0 / 120.0;
+                    state.start_instant = std::time::Instant::now()
+                        - std::time::Duration::from_secs_f64(simulated_time);
+                    match scenario {
+                        "route-reversal" => state.composer.set(if frame / 12 % 2 == 0 { "/" } else { "" }),
+                        "scroll" => {
+                            state.composer.clear();
+                            state.scroll_input(0.0, if frame / 24 % 2 == 0 { 24.0 } else { -24.0 }, true, false);
+                        }
+                        "thinking" => {
+                            state.messages.last_mut().unwrap().thinking_expanded = frame / 24 % 2 == 0;
+                        }
+                        "streaming" => {
+                            let reply = state.messages.last_mut().unwrap();
+                            if frame == 0 { reply.stream.start_streaming(simulated_time); }
+                            let end = markdown.char_indices().nth((frame + 1) * 12)
+                                .map(|(i, _)| i).unwrap_or(markdown.len());
+                            reply.stream.update_raw(&markdown[..end], true, simulated_time);
+                        }
+                        _ => {}
+                    }
+                    let start = std::time::Instant::now();
+                    state.tick(1.0 / 120.0);
+                    renderer.render(&mut state);
+                    if frame >= 24 { samples.push(start.elapsed().as_secs_f64() * 1000.0); }
+                }
+                samples.sort_by(f64::total_cmp);
+                println!("{{\"scenario\":\"{}\",\"scale\":{},\"messages\":{},\"samples\":{},\"p50_ms\":{:.3},\"p95_ms\":{:.3},\"max_ms\":{:.3}}}",
+                    scenario, scale, state.messages.len(), samples.len(), samples[samples.len()/2],
+                    samples[samples.len()*95/100], samples[samples.len()-1]);
+            }
+        }
+        Ok(())
+    }
+
     pub fn render_showcase_pngs(out_dir: &Path) -> Result<Vec<std::path::PathBuf>, String> {
         std::fs::create_dir_all(out_dir).map_err(|e| e.to_string())?;
         let mut renderer = Self::new(2.0);
@@ -2868,6 +2925,33 @@ impl Renderer {
             }
             renderer.render(&mut st);
             let p = out_dir.join("04-settings-keyless.png");
+            renderer.pixmap.save_png(&p).map_err(|e| e.to_string())?;
+            written.push(p);
+        }
+
+        // 5. Wide code/table and reasoning fixture, clipped while scrolled.
+        {
+            let mut config = AppConfig::default();
+            config.model = "preview-no-network".into();
+            let mut st = AppState::new(config);
+            let markdown = stress_markdown();
+            let mut reply = ChatItem::new_assistant_streaming(0.0);
+            reply.stream = crate::stream::SmoothStream::from_completed(&markdown);
+            reply.raw_content = markdown;
+            reply.streaming = false;
+            reply.thinking_expanded = true;
+            reply.thinking_reveal.snap_to(1.0);
+            reply.entrance.snap_to(1.0);
+            st.messages.push(reply);
+            renderer.panel_transition = PanelTransition::new();
+            renderer.previous_panel = None;
+            renderer.outgoing_panel = None;
+            renderer.render(&mut st);
+            for _ in 0..120 { st.tick(1.0 / 120.0); }
+            st.scroll_spring.snap_to(110.0);
+            st.user_scrolled_up = true;
+            renderer.render(&mut st);
+            let p = out_dir.join("05-wide-markdown-clipping.png");
             renderer.pixmap.save_png(&p).map_err(|e| e.to_string())?;
             written.push(p);
         }
@@ -3058,4 +3142,10 @@ mod rendering_regressions {
         assert_eq!(app.block_scroll[&(0,0)], 150.0);
         assert_eq!(app.scroll_spring.target, 0.0);
     }
+}
+
+fn stress_markdown() -> String {
+    format!("<think>Inspect wide content, preserve Unicode café العربية हिन्दी, and keep borders inside the viewport.</think>\n## Wide content\n\n| Item | Long identifier | Bytes | State | Owner | Detail |\n| --- | --- | --- | --- | --- | --- |\n| A | {} | 4096 | **Ready** | `renderer` | ==Clipped== |\n| B | {} | 8192 | Streaming | `parser` | No overflow |\n\n```rust\nlet very_long_line = \"{}\";\nfn main() {{ println!(\"café\"); }}\n```\n\n{}",
+        "identifier_".repeat(12), "column_".repeat(10), "unwrapped_".repeat(50),
+        "Paragraph **with emphasis**, `inline code`, and a [link](https://github.com).\n\n".repeat(8))
 }
