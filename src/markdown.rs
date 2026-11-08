@@ -93,6 +93,7 @@ pub enum MdBlock {
 pub struct ParsedMarkdown {
     pub blocks: Vec<MdBlock>,
     pub links: Vec<String>,
+    #[allow(dead_code)]
     pub frontier_states: Vec<WordFocusState>,
 }
 

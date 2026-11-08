@@ -1,0 +1,10 @@
+{"scenario":"steady","scale":1,"messages":24,"samples":72,"p50_ms":16.552,"p95_ms":17.492,"max_ms":17.648}
+{"scenario":"route-reversal","scale":1,"messages":24,"samples":72,"p50_ms":16.060,"p95_ms":17.333,"max_ms":17.879}
+{"scenario":"scroll","scale":1,"messages":24,"samples":72,"p50_ms":16.503,"p95_ms":16.969,"max_ms":17.080}
+{"scenario":"thinking","scale":1,"messages":24,"samples":72,"p50_ms":6.909,"p95_ms":6.992,"max_ms":7.737}
+{"scenario":"streaming","scale":1,"messages":24,"samples":72,"p50_ms":7.240,"p95_ms":7.426,"max_ms":7.470}
+{"scenario":"steady","scale":2,"messages":24,"samples":72,"p50_ms":55.076,"p95_ms":58.236,"max_ms":58.647}
+{"scenario":"route-reversal","scale":2,"messages":24,"samples":72,"p50_ms":56.223,"p95_ms":60.628,"max_ms":61.386}
+{"scenario":"scroll","scale":2,"messages":24,"samples":72,"p50_ms":56.188,"p95_ms":59.766,"max_ms":61.338}
+{"scenario":"thinking","scale":2,"messages":24,"samples":72,"p50_ms":45.351,"p95_ms":47.157,"max_ms":48.670}
+{"scenario":"streaming","scale":2,"messages":24,"samples":72,"p50_ms":46.493,"p95_ms":48.637,"max_ms":50.935}
