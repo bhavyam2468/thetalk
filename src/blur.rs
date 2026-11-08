@@ -180,8 +180,7 @@ fn fast_erf(x: f32) -> f32 {
 }
 
 /// Closed-form analytical Gaussian rounded-rectangle drop shadow (`0 offset_y blur rgba(0,0,0,alpha)`).
-/// Skips interior pixels completely covered by the opaque card so rendering a silky 36px float shadow
-/// takes < 0.1 ms with zero banding.
+/// Gaussian quadrature over rounded horizontal slices, skipping the opaque interior.
 #[allow(clippy::too_many_arguments)]
 pub fn draw_diffuse_rrect_shadow(
     pixmap: &mut PixmapMut<'_>,
@@ -231,9 +230,21 @@ pub fn draw_diffuse_rrect_shadow(
 
     for py in y0..y1 {
         let fy = py as f32 + 0.5;
-        let gy = 0.5 * (fast_erf((sy1 - fy) * inv_sqrt2_sigma) - fast_erf((sy0 - fy) * inv_sqrt2_sigma));
-        if gy <= 0.002 {
-            continue;
+        // Integrate horizontal Gaussian slices of the actual rounded silhouette.
+        // A product of two erf terms blurs a BOX, leaving square shoulders
+        // around a pill. Fixed Gaussian-weighted slices preserve curved ends.
+        let r = (radius + spread).max(0.0).min((sx1 - sx0).min(sy1 - sy0) * 0.5);
+        let mut slices = [(0.0_f32, 0.0_f32, 0.0_f32); 16];
+        for (i, slice) in slices.iter_mut().enumerate() {
+            let z = -3.0 + (i as f32 + 0.5) * (6.0 / 16.0);
+            let sample_y = fy + z * sigma;
+            if sample_y < sy0 || sample_y > sy1 {
+                continue;
+            }
+            let dy = (sy0 + r - sample_y).max(sample_y - (sy1 - r)).max(0.0);
+            let inset = r - (r * r - dy * dy).max(0.0).sqrt();
+            *slice = (sx0 + inset, sx1 - inset,
+                (-0.5 * z * z).exp() * (6.0 / 16.0) / (2.0 * std::f32::consts::PI).sqrt());
         }
         let in_card_y = py >= inner_y0 && py < inner_y1;
         let row_off = (py as usize) * (pm_w as usize) * 4;
@@ -243,9 +254,11 @@ pub fn draw_diffuse_rrect_shadow(
                 continue;
             }
             let fx = px as f32 + 0.5;
-            let gx = 0.5
-                * (fast_erf((sx1 - fx) * inv_sqrt2_sigma) - fast_erf((sx0 - fx) * inv_sqrt2_sigma));
-            let a = (gx * gy * alpha).clamp(0.0, 1.0);
+            let coverage: f32 = slices.iter().filter(|s| s.2 > 0.0).map(|&(left, right, weight)| {
+                weight * 0.5 * (fast_erf((right - fx) * inv_sqrt2_sigma)
+                    - fast_erf((left - fx) * inv_sqrt2_sigma))
+            }).sum();
+            let a = (coverage * alpha).clamp(0.0, 1.0);
             if a <= 1.0 / 512.0 {
                 continue;
             }

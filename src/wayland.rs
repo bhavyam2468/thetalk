@@ -255,8 +255,7 @@ pub fn run_wayland(
         let now_inst = Instant::now();
         let dt = now_inst
             .duration_since(client.last_frame_instant)
-            .as_secs_f32()
-            .clamp(1.0 / 500.0, 0.05);
+            .as_secs_f32();
         client.last_frame_instant = now_inst;
 
         let animating = client.app.tick(dt);
@@ -267,7 +266,7 @@ pub fn run_wayland(
         // Blink cursor gently at ~30Hz only when focused on a text input
         let cursor_focused = client.app.visible && client.app.has_keyboard_focus;
         let timeout = if animating || client.needs_redraw {
-            Duration::from_millis(8)
+            if client.frame_pending { Duration::from_millis(8) } else { Duration::ZERO }
         } else if cursor_focused {
             Duration::from_millis(33)
         } else {
@@ -279,17 +278,12 @@ pub fn run_wayland(
         }
 
         if client.configured && client.needs_redraw && !client.frame_pending {
-            let qh_loop = conn.backend();
-            let _ = qh_loop;
+            client.present_with_qh(&qh);
         }
 
         event_loop
             .dispatch(timeout, &mut client)
             .map_err(|e| format!("Event loop dispatch error: {e}"))?;
-
-        if client.configured && client.needs_redraw && !client.frame_pending {
-            client.present_without_frame_cb();
-        }
 
         let _ = client.conn.flush();
 
@@ -433,11 +427,6 @@ impl WaylandApp {
         self.shell.commit();
     }
 
-    fn present_without_frame_cb(&mut self) {
-        self.render_and_attach();
-        self.needs_redraw = false;
-        self.shell.commit();
-    }
 }
 
 impl CompositorHandler for WaylandApp {
@@ -469,15 +458,14 @@ impl CompositorHandler for WaylandApp {
     fn frame(
         &mut self,
         _conn: &Connection,
-        qh: &QueueHandle<Self>,
+        _qh: &QueueHandle<Self>,
         surface: &wl_surface::WlSurface,
         _time: u32,
     ) {
         if surface == self.shell.wl_surface() {
             self.frame_pending = false;
-            if self.needs_redraw {
-                self.present_with_qh(qh);
-            }
+            // Paint in the main loop after advancing the monotonic clock, not
+            // inside dispatch with the previous tick's animation state.
         }
     }
 

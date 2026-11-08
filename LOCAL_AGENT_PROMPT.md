@@ -11,7 +11,7 @@ Follow these steps autonomously from start to finish without asking unnecessary 
 
 1. PULL & READ CONTEXT
    - If not already inside the repo, clone `https://github.com/bhavyam2468/thetalk.git` and `cd thetalk`.
-   - Fetch remotes and checkout branch `arena/f1ebc9ee-thetalk` (`git fetch origin && git checkout arena/f1ebc9ee-thetalk && git pull origin arena/f1ebc9ee-thetalk`).
+   - Fetch remotes and checkout branch `arena/fe7a9b52-thetalk` (`git fetch origin && git checkout arena/fe7a9b52-thetalk && git pull origin arena/fe7a9b52-thetalk`).
    - Read `AGENT_CONTEXT.md` first — obey all non-negotiable UX/architecture invariants (100% pure Rust + native Wayland, zero Tauri/Electron, zero placeholders/tooltips in the floating input bar, zero `niri` keystroke hijacking when unfocused, Material 3 Expressive springs, and prominent Gaussian blur-to-focus streaming).
 
 2. VERIFY HOST PREREQUISITES
@@ -44,8 +44,12 @@ Follow these steps autonomously from start to finish without asking unnecessary 
    - Activate the prepared CI workflow if not yet placed:
      `mkdir -p .github/workflows && cp packaging/github-workflow-build.yml .github/workflows/build.yml`
    - Stage source fixes (if any), `.github/workflows/build.yml`, `Cargo.lock`, `assets/screenshots/*.png`, `logs/verification.log`, and `releases/thetalk-*.AppImage*` (verify `.AppImage` size is well under GitHub's 50 MB warning threshold — it should be ~4–8 MB stripped).
-   - Commit with a clear summary message on `arena/f1ebc9ee-thetalk` and push:
-     `git push origin arena/f1ebc9ee-thetalk`
+   - Commit with a clear summary message on `arena/fe7a9b52-thetalk` and push:
+     `git push origin arena/fe7a9b52-thetalk`
    - Also optionally publish or update a GitHub release `v0.1.0` attaching `releases/thetalk-*.AppImage*` via `gh release create v0.1.0 releases/thetalk-*.AppImage* --title "thetalk v0.1.0" --notes "Native Wayland niri local-LLM overlay"` (if `gh` is authenticated).
    - Print a concise final summary with commit hash, AppImage path/size, screenshots captured, and `niri` focus verification status.
 ```
+
+## Current polish verification (2026-11-08)
+
+Work on `arena/fe7a9b52-thetalk` only. Cloud changes have NOT been compiled or live-verified (no cargo/rustc here). Run tests/build/self-test before packaging. Repeatedly interrupt chat → slash palette → compact → settings transitions; no destination-size snap or wrapping-driven height feedback should occur. Test at 60/120/144 Hz, including delayed frames; caret and optical focus must resume on monotonic elapsed time. Profile rounded shadow quadrature at 2× scale during streaming, inspect pill corners and bottom surface edge for clipping. Inspect long model chips: text must remain inside chip bounds. Re-run passive keyboard focus and pointer passthrough checks. Capture fresh screenshots/logs; do not treat old screenshots/AppImage as verification of this patch.

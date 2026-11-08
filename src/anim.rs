@@ -59,7 +59,7 @@ pub fn spring_coefficients(stiffness: f32, damping: f32, mass: f32, seconds: f32
     if seconds <= 0.0 {
         return [1.0, 0.0, 0.0, 1.0];
     }
-    let dt = seconds.min(0.1);
+    let dt = seconds;
     let inv_mass = 1.0 / mass.max(0.001);
     let omega_sq = stiffness.max(0.0) * inv_mass;
     let decay = damping.max(0.0) * inv_mass * 0.5;
@@ -207,6 +207,7 @@ impl LogicalRect {
 
     /// Bounds spring overshoot so the animated body never exceeds `max_px` past `target`
     /// (ported from DankMaterialShell `FluidGeometry.js::limitOvershoot`).
+    #[allow(dead_code)]
     pub fn limit_overshoot(self, target: Self, max_px: f32) -> Self {
         let cap = max_px.max(0.0);
         let left = self.x.clamp(target.x - cap, target.x + target.w + cap - 1.0);
@@ -274,7 +275,8 @@ impl RectSpring {
             self.w.value.max(1.0),
             self.h.value.max(1.0),
         )
-        .limit_overshoot(self.target(), 18.0)
+        // Never clamp to the destination: a smaller target must not crop the
+        // current body before its springs have actually contracted.
     }
 
     #[allow(dead_code)]
@@ -294,6 +296,30 @@ impl RectSpring {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn contraction_starts_at_the_current_body() {
+        let large = LogicalRect::new(36.0, 38.0, 684.0, 640.0);
+        let mut rect = RectSpring::new(large, SpringSpec::SHEET_MORPH);
+        rect.retarget(LogicalRect::new(108.0, 632.0, 540.0, 46.0));
+        assert_eq!(rect.current(), large);
+        rect.advance(1.0 / 120.0);
+        assert!(rect.current().h > 600.0);
+        assert!((rect.current().y + rect.current().h - 678.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn delayed_frame_uses_all_elapsed_time() {
+        let mut delayed = Spring::new(0.0, SpringSpec::SHEET_MORPH);
+        delayed.retarget(100.0);
+        let mut regular = delayed.clone();
+        delayed.advance(0.25);
+        for _ in 0..30 {
+            regular.advance(1.0 / 120.0);
+        }
+        assert!((delayed.value - regular.value).abs() < 0.01);
+        assert!((delayed.velocity - regular.velocity).abs() < 0.05);
+    }
 
     #[test]
     fn spring_frame_rate_invariance() {

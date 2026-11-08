@@ -208,7 +208,7 @@ impl SmoothStream {
     /// Advances smooth word reveal and prunes expired blur-to-focus frontier words.
     /// Returns `true` if another animation frame is required.
     pub fn tick(&mut self, dt_secs: f64, now_secs: f64) -> bool {
-        let dt = dt_secs.clamp(0.0, 0.1);
+        let dt = if dt_secs.is_finite() { dt_secs.max(0.0) } else { 0.0 };
         let backlog = self.raw_answer.len().saturating_sub(self.revealed_bytes);
 
         if backlog > 0 && dt > 0.0 {

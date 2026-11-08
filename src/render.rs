@@ -196,7 +196,9 @@ impl Renderer {
         state.desired_composer_height = desired_composer_h;
 
         // 2. Shape above-bar content (Settings, Slash menu, or Conversation messages)
-        let inner_w = (state.card_rect.current().w - 44.0).max(200.0);
+        // Measure at the destination width, not a moving spring value. Otherwise
+        // line wrapping continually retargets height during a width morph.
+        let inner_w = (target_w - 44.0).max(200.0);
         let mut shaped_msgs: Vec<ShapedMessage> = Vec::new();
         let mut messages_total_h = 0.0f32;
 
@@ -242,8 +244,8 @@ impl Renderer {
                 card.w * scale,
                 card.h * scale,
                 radius * scale,
-                10.0 * scale,
-                16.0 * scale,
+                3.0 * scale,
+                8.0 * scale,
                 theme.shadow_alpha * presence,
                 (0, 0, 0),
             );
@@ -254,8 +256,8 @@ impl Renderer {
                 card.w * scale,
                 card.h * scale,
                 radius * scale,
-                2.0 * scale,
-                3.5 * scale,
+                1.0 * scale,
+                2.5 * scale,
                 theme.shadow_alpha * 0.42 * presence,
                 (0, 0, 0),
             );
@@ -884,7 +886,14 @@ impl Renderer {
                         &[],
                         None,
                         state,
-                        ctx,
+                        DrawContext {
+                            clip: ClipBox {
+                                x0: ctx.clip.x0.max(((mrect.x + 8.0) * ctx.scale).ceil() as i32),
+                                x1: ctx.clip.x1.min(((mrect.x + mrect.w - 8.0) * ctx.scale).floor() as i32),
+                                ..ctx.clip
+                            },
+                            ..ctx
+                        },
                     );
                     mx += mw + 6.0;
                 }
