@@ -1857,7 +1857,7 @@ impl Renderer {
                         rect: mrect,
                         target: HitTarget::ModelChip(idx),
                     });
-                    let selected = state.field_model.text.trim() == model_id;
+                    let selected = state.field_model.text.trim() == model_id.as_str();
                     let chip_kb = kb && state.focus_target == FocusTarget::SettingsModelChip(idx);
                     self.fill_rrect_logical(
                         mrect.x,
@@ -1918,7 +1918,7 @@ impl Renderer {
 
         // Floating Profile Dropdown overlay when open in Settings panel
         if state.settings_profile_dropdown {
-            let profiles = state.config.all_profiles();
+            let profiles: Vec<_> = state.config.all_profiles().to_vec();
             let dd_w = 320.0f32.min(inner_w);
             let dd_h = ((profiles.len().min(7) as f32) * 30.0 + 10.0).min(above_h - 60.0);
             let dd_rect = LogicalRect::new(pad_x, dropdown_anchor_y, dd_w, dd_h);
@@ -4130,8 +4130,8 @@ impl Renderer {
         // 6. Nested Palette: /settings -> /provider
         {
             let mut cfg = AppConfig::default();
-            cfg.model = "claude-sonnet-4-5".into();
             cfg.select_profile("anthropic");
+            cfg.model = "claude-sonnet-4-5".into();
             let mut st = AppState::new(cfg);
             renderer.panel_transition = PanelTransition::new();
             renderer.last_above_rect = None;

@@ -1015,7 +1015,7 @@ pub fn list_dir_entries(dir: &Path, filter: &str) -> Vec<AttachDirEntry> {
         if !show_hidden && name.starts_with('.') {
             continue;
         }
-        if !q.is_empty() && !name.to_ascii_lowercase().contains(&q) {
+        if !q.is_empty() && !name.to_ascii_lowercase().contains(q.as_str()) {
             continue;
         }
         let path = item.path();

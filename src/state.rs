@@ -685,8 +685,8 @@ impl AppState {
             match ev {
                 AttachEvent::Prepared { id, result } => {
                     if let Some(pos) = self.composer_attachments.iter().position(|a| a.id == id) {
-                        if let Some(err) = result.error {
-                            self.attach_status = Some((err, now + 3.2));
+                        if let Some(ref err) = result.error {
+                            self.attach_status = Some((err.clone(), now + 3.2));
                             self.composer_attachments.remove(pos);
                         } else {
                             self.composer_attachments[pos].apply_prepared(result);
@@ -1009,7 +1009,7 @@ impl AppState {
     }
 
     pub fn toggle_vision(&mut self) {
-        self.config.vision = !self.config.vision;
+        self.config.set_active_vision(!self.config.vision);
         let _ = self.config.save();
     }
 
@@ -1753,9 +1753,7 @@ impl AppState {
             }
             HitTarget::SettingsProfileOption(idx) => {
                 self.settings_profile_dropdown = false;
-                let profiles = self.config.all_profiles();
-                if let Some(p) = profiles.get(idx) {
-                    let id = p.id.clone();
+                if let Some(id) = self.config.all_profiles().get(idx).map(|p| p.id.clone()) {
                     self.select_profile_by_id(&id);
                 }
                 self.focus_target = FocusTarget::SettingsProfile;
@@ -2257,25 +2255,29 @@ impl AppState {
         shift: bool,
     ) {
         if self.settings_profile_dropdown {
-            let profiles = self.config.all_profiles();
+            let len = self.config.all_profiles().len();
             match keysym {
                 0xff52 => {
-                    if !profiles.is_empty() {
+                    if len > 0 {
                         self.settings_profile_selected =
-                            (self.settings_profile_selected + profiles.len() - 1) % profiles.len();
+                            (self.settings_profile_selected + len - 1) % len;
                     }
                     return;
                 }
                 0xff54 => {
-                    if !profiles.is_empty() {
+                    if len > 0 {
                         self.settings_profile_selected =
-                            (self.settings_profile_selected + 1) % profiles.len();
+                            (self.settings_profile_selected + 1) % len;
                     }
                     return;
                 }
                 0xff0d | 0xff8d | 0x0020 => {
-                    if let Some(p) = profiles.get(self.settings_profile_selected) {
-                        let id = p.id.clone();
+                    if let Some(id) = self
+                        .config
+                        .all_profiles()
+                        .get(self.settings_profile_selected)
+                        .map(|p| p.id.clone())
+                    {
                         self.select_profile_by_id(&id);
                     }
                     self.settings_profile_dropdown = false;

@@ -551,12 +551,12 @@ impl PaletteState {
                 } else {
                     rows.into_iter()
                         .filter(|r| {
-                            r.title.to_ascii_lowercase().contains(&q)
+                            r.title.to_ascii_lowercase().contains(q.as_str())
                                 || r.subtitle
                                     .as_deref()
                                     .unwrap_or("")
                                     .to_ascii_lowercase()
-                                    .contains(&q)
+                                    .contains(q.as_str())
                         })
                         .collect()
                 }
@@ -822,10 +822,10 @@ impl PaletteState {
                 }
 
                 for m in discovered_models {
-                    if !q.is_empty() && !m.to_ascii_lowercase().contains(&q) {
+                    if !q.is_empty() && !m.to_ascii_lowercase().contains(q.as_str()) {
                         continue;
                     }
-                    let active = config.model.trim() == m;
+                    let active = config.model.trim() == m.as_str();
                     rows.push(PaletteRow {
                         action: PaletteRowAction::SelectModel(m.clone()),
                         title: m.clone(),
@@ -928,8 +928,8 @@ impl PaletteState {
 
                 for (label, path) in quick_attach_dirs() {
                     if !q.is_empty()
-                        && !label.to_ascii_lowercase().contains(&q)
-                        && !path.to_string_lossy().to_ascii_lowercase().contains(&q)
+                        && !label.to_ascii_lowercase().contains(q.as_str())
+                        && !path.to_string_lossy().to_ascii_lowercase().contains(q.as_str())
                     {
                         continue;
                     }
@@ -958,7 +958,7 @@ impl PaletteState {
                         }
                         AttachmentStatus::Error(_) => "Failed".into(),
                     };
-                    if !q.is_empty() && !att.name.to_ascii_lowercase().contains(&q) {
+                    if !q.is_empty() && !att.name.to_ascii_lowercase().contains(q.as_str()) {
                         continue;
                     }
                     rows.push(PaletteRow {
@@ -994,7 +994,7 @@ impl PaletteState {
                     }
                 }
                 for entry in &self.dir_entries {
-                    if !q.is_empty() && !entry.name.to_ascii_lowercase().contains(&q) {
+                    if !q.is_empty() && !entry.name.to_ascii_lowercase().contains(q.as_str()) {
                         continue;
                     }
                     if entry.is_dir {
