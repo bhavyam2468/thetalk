@@ -143,18 +143,32 @@ impl ProviderProfile {
     }
 }
 
+fn default_base_url() -> String {
+    "http://localhost:11434/v1".to_string()
+}
+
+fn default_true() -> bool {
+    true
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(default)]
 pub struct AppConfig {
+    #[serde(default)]
     pub active_profile_id: String,
+    #[serde(default)]
     pub profiles: Vec<ProviderProfile>,
+    #[serde(default = "default_base_url")]
     pub base_url: String,
     /// Optional API key — leave empty for keyless local endpoints (Ollama, llama.cpp, LM Studio, vLLM).
+    #[serde(default)]
     pub api_key: String,
     /// Optional model name — if empty, auto-discovered from `GET {base_url}/models`.
+    #[serde(default)]
     pub model: String,
     /// Whether image attachments / scanned PDF pages are sent visually to the model.
+    #[serde(default = "default_true")]
     pub vision: bool,
+    #[serde(default)]
     pub theme: ThemeMode,
 }
 
