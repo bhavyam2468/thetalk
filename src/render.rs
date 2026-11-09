@@ -1,11 +1,13 @@
 use crate::anim::LogicalRect;
-use crate::presentation::{PanelSnapshot, PanelTransition, TRANSITION_SECONDS};
+use crate::attach::{format_bytes, Attachment, AttachmentStatus};
 use crate::blur::{draw_diffuse_rrect_shadow, BlurScratch};
-use crate::config::{AppConfig, PRESETS};
+use crate::config::AppConfig;
 use crate::markdown::{
     parse_markdown, unpack_frontier_idx, unpack_link_idx, ListMarker, MdBlock, ParsedMarkdown,
     RichSpan, META_CODESPAN, META_LINK, META_MARK, META_STRIKE,
 };
+use crate::palette::{DropdownKind, PaletteRoute, MAX_VISIBLE_ROWS, ROW_HEIGHT, ROW_STEP};
+use crate::presentation::{PanelSnapshot, PanelTransition, TRANSITION_SECONDS};
 use crate::state::{
     AppState, ChatItem, FocusTarget, HitTarget, HitZone, Panel, Role, TextField, BAR_MIN_HEIGHT,
     SURFACE_HEIGHT, SURFACE_WIDTH,
@@ -47,7 +49,7 @@ pub struct Renderer {
     pub mask: Mask,
     pub scale: f32,
     panel_transition: PanelTransition,
-    previous_panel: Option<PanelSnapshot>,
+    last_above_rect: Option<(usize, usize, usize, usize)>,
     outgoing_panel: Option<PanelSnapshot>,
     shadow_cache: Option<ShadowTemplate>,
     glyph_placements: Vec<(cosmic_text::CacheKey, i32, i32, u32, u32)>,
@@ -123,6 +125,7 @@ struct ShapedMessage {
     msg_idx: usize,
     role: Role,
     user_buf: Option<(Buffer, f32, f32)>,
+    user_chips: Vec<(String, f32)>,
     thinking_pill: Option<(Buffer, Option<(Buffer, f32)>)>,
     blocks: Vec<ShapedBlock>,
     waiting_ttft: bool,
@@ -171,7 +174,7 @@ impl Renderer {
             mask: Mask::new(pw.max(1), ph.max(1)).expect("mask alloc"),
             scale,
             panel_transition: PanelTransition::new(),
-            previous_panel: None,
+            last_above_rect: None,
             outgoing_panel: None,
             message_cache: Vec::new(),
             shadow_cache: None,
@@ -187,16 +190,54 @@ impl Renderer {
         if self.pixmap.width() != pw || self.pixmap.height() != ph {
             self.pixmap = Pixmap::new(pw, ph).expect("pixmap resize");
             self.mask = Mask::new(pw, ph).expect("mask resize");
-            self.previous_panel = None;
+            self.last_above_rect = None;
             self.outgoing_panel = None;
             self.shadow_cache = None;
         }
     }
 
+    fn capture_last_above_snapshot(&mut self) -> Option<PanelSnapshot> {
+        let (x0, y0, x1, y1) = self.last_above_rect?;
+        let pw = self.pixmap.width() as usize;
+        let ph = self.pixmap.height() as usize;
+        let x0 = x0.min(pw);
+        let x1 = x1.min(pw);
+        let y0 = y0.min(ph);
+        let y1 = y1.min(ph);
+        if x1 <= x0 || y1 <= y0 {
+            return None;
+        }
+        let w = x1 - x0;
+        let h = y1 - y0;
+        let src = self.pixmap.data();
+        let mut pixels = Vec::with_capacity(w * h * 4);
+        for y in y0..y1 {
+            pixels.extend_from_slice(&src[(y * pw + x0) * 4..(y * pw + x1) * 4]);
+        }
+        Some(PanelSnapshot {
+            width: w,
+            height: h,
+            pixels,
+        })
+    }
+
     pub fn render(&mut self, state: &mut AppState) {
+        let now = state.now_secs();
+        let route = state.route_key();
+        if self.panel_transition.update_route(route, now) {
+            self.outgoing_panel = self.capture_last_above_snapshot();
+            state.panel_transition_until = now + TRANSITION_SECONDS;
+        }
+        let panel_progress = self.panel_transition.progress(now);
+        if panel_progress >= 1.0 {
+            self.outgoing_panel = None;
+        }
+
+        self.last_above_rect = None;
         self.pixmap.fill(Color::TRANSPARENT);
         state.hit_zones.clear();
         state.scroll_regions.clear();
+        state.palette_viewport_rect = None;
 
         let presence = state.presence_spring.value.clamp(0.0, 1.0);
         if !state.visible && presence <= 0.01 {
@@ -204,17 +245,10 @@ impl Renderer {
         }
 
         let scale = self.scale;
-        let now = state.now_secs();
         let theme = state.theme;
         let panel = state.panel();
-        if self.panel_transition.update(panel, now) {
-            self.outgoing_panel = self.previous_panel.take();
-            state.panel_transition_until = now + TRANSITION_SECONDS;
-        }
-        let panel_progress = self.panel_transition.progress(now);
-        if panel_progress >= 1.0 { self.outgoing_panel = None; }
 
-        // 1. Shape composer text first to compute exact dynamic bar height
+        // 1. Shape composer text + attachment chips to compute exact dynamic bar height
         let expanded = state.is_expanded();
         let target_w = if expanded {
             crate::state::BAR_WIDTH_EXPANDED
@@ -233,10 +267,11 @@ impl Renderer {
             false,
             Wrap::WordOrGlyph,
         );
-        let desired_composer_h = (composer_text_h + 24.0).clamp(BAR_MIN_HEIGHT, 154.0);
+        let chips_h = self.measure_composer_chips_height(state, target_w - 36.0);
+        let desired_composer_h = (composer_text_h + 24.0 + chips_h).clamp(BAR_MIN_HEIGHT, 210.0);
         state.desired_composer_height = desired_composer_h;
 
-        // 2. Shape above-bar content (Settings, Slash menu, or Conversation messages)
+        // 2. Shape above-bar content (Settings, Command Palette, or Conversation messages)
         // Measure at the destination width, not a moving spring value. Otherwise
         // line wrapping continually retargets height during a width morph.
         let inner_w = (target_w - 44.0).max(200.0);
@@ -246,8 +281,7 @@ impl Renderer {
         if panel == Panel::Settings {
             state.desired_content_height = self.estimate_settings_height(state);
         } else if panel == Panel::Commands {
-            let count = state.filtered_slash_commands().len() as f32;
-            state.desired_content_height = count * 36.0 + 14.0;
+            state.desired_content_height = self.estimate_palette_height(state);
         } else if panel == Panel::Conversation {
             let mut y_acc = 18.0f32;
             for idx in 0..state.messages.len() {
@@ -309,9 +343,14 @@ impl Renderer {
         let composer_top = card.y + card.h - actual_composer_h;
         let above_h = (composer_top - card.y).max(0.0);
 
-        if above_h <= 4.0 { self.previous_panel = None; }
         if above_h > 4.0 {
             let content_fade = panel_progress;
+            let dir = self.panel_transition.direction() as f32;
+            let incoming_slide_x = if panel == Panel::Commands {
+                dir * 10.0 * (1.0 - panel_progress)
+            } else {
+                0.0
+            };
             let above_clip = ClipBox {
                 x0: ((card.x + 1.0) * scale).floor() as i32,
                 y0: ((card.y + 1.0) * scale).floor() as i32,
@@ -328,7 +367,15 @@ impl Renderer {
             if panel == Panel::Settings {
                 self.draw_settings_panel(state, card.x, card.y, card.w, above_h, ctx);
             } else if panel == Panel::Commands {
-                self.draw_slash_menu(state, card.x, composer_top, card.w, ctx);
+                self.draw_palette_panel(
+                    state,
+                    card.x + incoming_slide_x,
+                    card.y,
+                    composer_top,
+                    card.w,
+                    above_h,
+                    ctx,
+                );
             } else if !shaped_msgs.is_empty() {
                 let viewport_h = above_h;
                 state.max_scroll = (messages_total_h - viewport_h).max(0.0);
@@ -358,8 +405,8 @@ impl Renderer {
             });
 
             // Every route uses the same outgoing-content retention. Reversals
-            // capture the currently composited scene, not a hard-coded source.
-            self.retain_panel(card, composer_top, (1.0 - panel_progress) * presence);
+            // capture the currently composited scene right before clearing the frame.
+            self.retain_panel(card, composer_top, panel_progress, presence);
 
             // Whisper-thin hairline divider above composer bar
             self.fill_rect_logical(
@@ -520,8 +567,15 @@ impl Renderer {
     }
 
     /// Composite the outgoing panel bottom-centered inside the current rounded
-    /// card. No scaling of glyphs; shrink/expand is handled solely by geometry.
-    fn retain_panel(&mut self, card: LogicalRect, composer_top: f32, outgoing_alpha: f32) {
+    /// card and remember this frame's live above-composer region for interruption-safe
+    /// snapshot capture before the next clear.
+    fn retain_panel(
+        &mut self,
+        card: LogicalRect,
+        composer_top: f32,
+        panel_progress: f32,
+        presence: f32,
+    ) {
         let scale = self.scale;
         let pw = self.pixmap.width() as usize;
         let ph = self.pixmap.height() as usize;
@@ -529,31 +583,35 @@ impl Renderer {
         let x1 = ((card.x + card.w) * scale).floor().max(0.0).min(pw as f32) as usize;
         let y0 = (card.y * scale).ceil().max(0.0) as usize;
         let y1 = (composer_top * scale).floor().max(0.0).min(ph as f32) as usize;
-        if x1 <= x0 || y1 <= y0 { return; }
+        if x1 <= x0 || y1 <= y0 {
+            return;
+        }
         let w = x1 - x0;
-        let h = y1 - y0;
-        if let Some(old) = &self.outgoing_panel {
-            let ox = (x0 + w / 2) as i32 - (old.width / 2) as i32;
-            let oy = y1 as i32 - old.height as i32;
-            if let Some(source) = tiny_skia::PixmapRef::from_bytes(&old.pixels, old.width as u32, old.height as u32) {
-                // Use tiny-skia's optimized premultiplied raster pipeline instead
-                // of scalar float conversion/rounding for every RGBA channel.
-                self.pixmap.draw_pixmap(ox, oy, source, &tiny_skia::PixmapPaint {
-                    opacity: outgoing_alpha.clamp(0.0, 1.0), ..Default::default()
-                }, Transform::identity(), Some(&self.mask));
+        let outgoing_alpha = (1.0 - panel_progress) * presence;
+        let dir = self.panel_transition.direction() as f32;
+        if outgoing_alpha > 0.002 {
+            if let Some(old) = &self.outgoing_panel {
+                let slide_px = (-dir * 10.0 * panel_progress * scale).round() as i32;
+                let ox = (x0 + w / 2) as i32 - (old.width / 2) as i32 + slide_px;
+                let oy = y1 as i32 - old.height as i32;
+                if let Some(source) =
+                    tiny_skia::PixmapRef::from_bytes(&old.pixels, old.width as u32, old.height as u32)
+                {
+                    self.pixmap.draw_pixmap(
+                        ox,
+                        oy,
+                        source,
+                        &tiny_skia::PixmapPaint {
+                            opacity: outgoing_alpha.clamp(0.0, 1.0),
+                            ..Default::default()
+                        },
+                        Transform::identity(),
+                        Some(&self.mask),
+                    );
+                }
             }
         }
-        // Only snapshot outgoing panel when stationary or when transition completes,
-        // eliminating redundant full-frame copies during active spring transitions.
-        if outgoing_alpha <= 0.001 {
-            let mut pixels = self.previous_panel.take().map(|p| p.pixels).unwrap_or_default();
-            pixels.clear();
-            pixels.reserve(w * h * 4);
-            for y in y0..y1 {
-                pixels.extend_from_slice(&self.pixmap.data()[(y * pw + x0) * 4..(y * pw + x1) * 4]);
-            }
-            self.previous_panel = Some(PanelSnapshot { width: w, height: h, pixels });
-        }
+        self.last_above_rect = Some((x0, y0, x1, y1));
     }
 
     fn restrict_mask(&mut self, clip: ClipBox) {
@@ -621,6 +679,42 @@ impl Renderer {
         }
     }
 
+    fn chip_label_for_pending(att: &Attachment) -> String {
+        let short_name = truncate_label(&att.name, 20);
+        match &att.status {
+            AttachmentStatus::Loading => format!("...  {}", short_name),
+            AttachmentStatus::Error(_) => format!("ERR  {}", short_name),
+            AttachmentStatus::Ready => {
+                let tag = att.kind.badge();
+                if let Some(pages) = att.page_count {
+                    format!("{}  {} · {}p", tag, short_name, pages)
+                } else {
+                    format!("{}  {} · {}", tag, short_name, format_bytes(att.size_bytes))
+                }
+            }
+        }
+    }
+
+    fn measure_composer_chips_height(&mut self, state: &AppState, avail_w: f32) -> f32 {
+        if state.composer_attachments.is_empty() {
+            return 0.0;
+        }
+        let mut x = 0.0f32;
+        let mut rows = 1usize;
+        for att in &state.composer_attachments {
+            let lbl = Self::chip_label_for_pending(att);
+            let (buf, _) =
+                self.shape_plain_field(&lbl, 11.2, 15.0, avail_w, state.theme.fg, false, Wrap::None);
+            let cw = (measure_buffer_width(&buf) + 28.0).min(avail_w);
+            if x > 0.0 && x + cw > avail_w {
+                rows += 1;
+                x = 0.0;
+            }
+            x += cw + 6.0;
+        }
+        (rows as f32) * 24.0 + ((rows.saturating_sub(1)) as f32) * 6.0 + 8.0
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn draw_composer_bar(
         &mut self,
@@ -654,9 +748,6 @@ impl Renderer {
             target: HitTarget::Input(FocusTarget::Composer),
         });
 
-        let text_x = bar_rect.x + 18.0;
-        let text_y = bar_rect.y + ((bar_rect.h - composer_text_h) * 0.5).max(11.0);
-
         let bar_clip = ClipBox {
             x0: ((bar_rect.x + 10.0) * scale).floor() as i32,
             y0: ((bar_rect.y + 4.0) * scale).floor() as i32,
@@ -669,9 +760,86 @@ impl Renderer {
             alpha_mul: presence,
         };
 
-        let composer_focused =
-            state.has_keyboard_focus && state.focus_target == FocusTarget::Composer;
-        if composer_focused {
+        let mut chips_offset_y = 0.0f32;
+        if !state.composer_attachments.is_empty() {
+            let start_x = bar_rect.x + 14.0;
+            let avail_w = (bar_rect.w - 28.0).max(120.0);
+            let mut cx = start_x;
+            let mut cy = bar_rect.y + 8.0;
+            let att_snapshot: Vec<(String, f32)> = state
+                .composer_attachments
+                .iter()
+                .map(|a| (Self::chip_label_for_pending(a), a.entrance.value.clamp(0.0, 1.0)))
+                .collect();
+
+            for (idx, (lbl, pop)) in att_snapshot.into_iter().enumerate() {
+                let (buf, _) =
+                    self.shape_plain_field(&lbl, 11.2, 15.0, avail_w - 26.0, theme.fg, false, Wrap::None);
+                let cw = (measure_buffer_width(&buf) + 28.0).min(avail_w);
+                if cx > start_x && cx + cw > start_x + avail_w {
+                    cx = start_x;
+                    cy += 30.0;
+                }
+                let chip_y = cy + (1.0 - pop) * 3.0;
+                let crect = LogicalRect::new(cx, chip_y, cw, 24.0);
+                let hovered = matches!(
+                    state.hovered_hit(),
+                    Some(HitTarget::ComposerAttachChipRemove(i)) if i == idx
+                );
+                state.hit_zones.push(HitZone {
+                    rect: LogicalRect::new(crect.x + crect.w - 22.0, crect.y, 22.0, crect.h),
+                    target: HitTarget::ComposerAttachChipRemove(idx),
+                });
+                let chip_alpha = ctx.alpha_mul * pop;
+                self.fill_rrect_logical(
+                    crect.x,
+                    crect.y,
+                    crect.w,
+                    crect.h,
+                    7.0,
+                    if hovered { theme.surface_hover } else { theme.surface }.with_alpha(chip_alpha),
+                    true,
+                );
+                self.stroke_rrect_logical(
+                    crect.x,
+                    crect.y,
+                    crect.w,
+                    crect.h,
+                    7.0,
+                    1.0,
+                    theme.line.with_alpha(chip_alpha),
+                );
+                let chip_ctx = DrawContext {
+                    alpha_mul: chip_alpha,
+                    ..ctx
+                };
+                self.draw_buffer_runs(&buf, crect.x + 8.0, crect.y + 4.5, &[], None, state, chip_ctx);
+                let (xbuf, _) = self.shape_plain_field(
+                    "×",
+                    12.0,
+                    15.0,
+                    14.0,
+                    if hovered { theme.fg } else { theme.muted },
+                    false,
+                    Wrap::None,
+                );
+                self.draw_buffer_runs(&xbuf, crect.x + crect.w - 15.0, crect.y + 4.0, &[], None, state, chip_ctx);
+                cx += cw + 6.0;
+            }
+            chips_offset_y = (cy + 24.0 - bar_rect.y) + 4.0;
+        }
+
+        let text_x = bar_rect.x + 18.0;
+        let text_y = if chips_offset_y > 0.0 {
+            bar_rect.y + chips_offset_y + 4.0
+        } else {
+            bar_rect.y + ((bar_rect.h - composer_text_h) * 0.5).max(11.0)
+        };
+
+        let show_composer_cursor = state.has_keyboard_focus
+            && state.focus_target == FocusTarget::Composer
+            && (!state.slash_menu_open() || (!state.palette.open && state.composer_has_slash_trigger()));
+        if show_composer_cursor {
             self.draw_field_selection_and_cursor(
                 &state.composer,
                 composer_buf,
@@ -686,6 +854,42 @@ impl Renderer {
 
         if !state.composer.text.is_empty() {
             self.draw_buffer_runs(composer_buf, text_x, text_y, &[], None, state, ctx);
+        }
+
+        // Transient status whisper (e.g. clipboard error, attachment limit, copied)
+        if let Some((status_txt, exp)) = state.attach_status.clone() {
+            if now < exp {
+                let fade = ((exp - now).min(0.4) / 0.4) as f32;
+                let (sbuf, _) = self.shape_plain_field(
+                    &status_txt,
+                    11.2,
+                    15.0,
+                    260.0,
+                    theme.muted,
+                    false,
+                    Wrap::None,
+                );
+                let sw = measure_buffer_width(&sbuf);
+                let right_edge = if state.send_bloom.value > 0.05 {
+                    bar_rect.x + bar_rect.w - 46.0
+                } else {
+                    bar_rect.x + bar_rect.w - 16.0
+                };
+                if sw + 30.0 < bar_rect.w * 0.55 {
+                    self.draw_buffer_runs(
+                        &sbuf,
+                        right_edge - sw,
+                        bar_rect.y + bar_rect.h - 29.0,
+                        &[],
+                        None,
+                        state,
+                        DrawContext {
+                            alpha_mul: presence * fade,
+                            ..ctx
+                        },
+                    );
+                }
+            }
         }
 
         // Send / Stop circular action button (blooms smoothly only when needed)
@@ -737,75 +941,581 @@ impl Renderer {
         }
     }
 
-    fn draw_slash_menu(
+    fn palette_shows_header(&self, state: &AppState) -> bool {
+        state.palette.open
+            || state.palette.stack.len() > 1
+            || state.palette.dropdown.is_some()
+            || state.palette.has_search_bar()
+    }
+
+    fn estimate_palette_height(&self, state: &AppState) -> f32 {
+        let header_h = if self.palette_shows_header(state) {
+            32.0
+        } else {
+            0.0
+        };
+        let search_h = if state.palette.has_search_bar() {
+            38.0
+        } else {
+            0.0
+        };
+        let count = if let Some(dd) = state.palette.dropdown {
+            state
+                .palette
+                .build_dropdown_options(dd, &state.config)
+                .len()
+        } else {
+            state.palette_rows().len()
+        };
+        let vis = count.max(1).min(MAX_VISIBLE_ROWS) as f32;
+        header_h + search_h + vis * ROW_STEP + 14.0
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn draw_palette_panel(
         &mut self,
         state: &mut AppState,
         card_x: f32,
+        _card_y: f32,
         composer_top: f32,
         card_w: f32,
+        _above_h: f32,
         ctx: DrawContext,
     ) {
-        let cmds = state.filtered_slash_commands();
-        if cmds.is_empty() {
-            return;
-        }
-        let sel = state.slash_selected.min(cmds.len().saturating_sub(1));
-        let total_h = cmds.len() as f32 * 36.0 + 12.0;
-        let start_y = composer_top - total_h + 6.0;
         let theme = state.theme;
+        let now = state.now_secs();
+        let focus_border = Rgba::lerp_premultiplied(theme.line, theme.accent, 0.65);
 
-        for (vis_idx, (_, entry)) in cmds.iter().enumerate() {
-            let row_y = start_y + vis_idx as f32 * 36.0;
-            let row_rect = LogicalRect::new(card_x + 10.0, row_y, card_w - 20.0, 32.0);
-            state.hit_zones.push(HitZone {
-                rect: row_rect,
-                target: HitTarget::SlashItem(vis_idx),
-            });
+        let show_header = self.palette_shows_header(state);
+        let show_search = state.palette.has_search_bar();
+        let header_h = if show_header { 32.0 } else { 0.0 };
+        let search_h = if show_search { 38.0 } else { 0.0 };
 
-            let is_hovered =
-                matches!(state.hovered_hit(), Some(HitTarget::SlashItem(i)) if i == vis_idx);
-            if vis_idx == sel || is_hovered {
+        let content_h = self.estimate_palette_height(state);
+        let mut y = composer_top - content_h + 8.0;
+
+        // 1. Optional Breadcrumb Header
+        if show_header {
+            let can_back = state.palette.stack.len() > 1 || state.palette.dropdown.is_some();
+            if can_back {
+                let back_rect = LogicalRect::new(card_x + 12.0, y, 24.0, 24.0);
+                state.hit_zones.push(HitZone {
+                    rect: back_rect,
+                    target: HitTarget::PaletteBack,
+                });
+                let bhov = matches!(state.hovered_hit(), Some(HitTarget::PaletteBack));
                 self.fill_rrect_logical(
-                    row_rect.x,
-                    row_rect.y,
-                    row_rect.w,
-                    row_rect.h,
+                    back_rect.x,
+                    back_rect.y,
+                    back_rect.w,
+                    back_rect.h,
+                    6.0,
+                    if bhov { theme.surface_hover } else { theme.surface }.with_alpha(ctx.alpha_mul),
+                    true,
+                );
+                let (bbuf, _) =
+                    self.shape_plain_field("←", 12.5, 16.0, 20.0, theme.fg, false, Wrap::None);
+                self.draw_buffer_runs(&bbuf, back_rect.x + 6.0, back_rect.y + 3.5, &[], None, state, ctx);
+            }
+
+            let crumbs = state.palette.breadcrumbs().join("  /  ");
+            let crumb_x = card_x + if can_back { 42.0 } else { 18.0 };
+            let (cbuf, _) = self.shape_plain_field(
+                &crumbs,
+                12.2,
+                16.0,
+                card_w - 150.0,
+                theme.muted,
+                false,
+                Wrap::None,
+            );
+            self.draw_buffer_runs(&cbuf, crumb_x, y + 4.0, &[], None, state, ctx);
+
+            let hint = if state.palette.dropdown.is_some() {
+                "← back · Enter select"
+            } else if state.palette.editing_field.is_some() {
+                "Enter save · Tab next"
+            } else if matches!(state.palette.current_route(), Some(PaletteRoute::Provider)) {
+                "Enter edit · ← back"
+            } else {
+                "← back · Esc close"
+            };
+            let (hbuf, _) = self.shape_plain_field(
+                hint,
+                11.0,
+                15.0,
+                160.0,
+                theme.faint,
+                false,
+                Wrap::None,
+            );
+            let hw = measure_buffer_width(&hbuf);
+            self.draw_buffer_runs(
+                &hbuf,
+                card_x + card_w - hw - 16.0,
+                y + 4.5,
+                &[],
+                None,
+                state,
+                ctx,
+            );
+            y += header_h;
+        }
+
+        // 2. Optional Submenu Search / Path Box
+        if show_search && state.palette.dropdown.is_none() {
+            let srect = LogicalRect::new(card_x + 12.0, y, card_w - 24.0, 32.0);
+            state.hit_zones.push(HitZone {
+                rect: srect,
+                target: HitTarget::PaletteSearchBox,
+            });
+            self.fill_rrect_logical(
+                srect.x,
+                srect.y,
+                srect.w,
+                srect.h,
+                8.0,
+                theme.surface.with_alpha(ctx.alpha_mul),
+                true,
+            );
+            self.stroke_rrect_logical(
+                srect.x,
+                srect.y,
+                srect.w,
+                srect.h,
+                8.0,
+                1.0,
+                focus_border.with_alpha(ctx.alpha_mul * 0.75),
+            );
+
+            let query_field = state
+                .palette
+                .current_frame()
+                .map(|f| f.query.clone())
+                .unwrap_or_default();
+            let s_clip = ClipBox {
+                x0: ((srect.x + 8.0) * ctx.scale).floor() as i32,
+                y0: ((srect.y + 3.0) * ctx.scale).floor() as i32,
+                x1: ((srect.x + srect.w - 8.0) * ctx.scale).ceil() as i32,
+                y1: ((srect.y + srect.h - 3.0) * ctx.scale).ceil() as i32,
+            }
+            .intersect(ctx.clip);
+            let sctx = DrawContext {
+                clip: s_clip,
+                ..ctx
+            };
+
+            if query_field.text.is_empty() {
+                let placeholder = match state.palette.current_route() {
+                    Some(PaletteRoute::Models) => "Filter models or type custom model ID…",
+                    Some(PaletteRoute::Attach) => "Filter folders or enter ~/path/to/file…",
+                    Some(PaletteRoute::FileBrowser(_)) => "Filter files in folder…",
+                    _ => "Filter options…",
+                };
+                let (pbuf, _) = self.shape_plain_field(
+                    placeholder,
+                    12.5,
+                    18.0,
+                    srect.w - 20.0,
+                    theme.faint,
+                    false,
+                    Wrap::None,
+                );
+                self.draw_buffer_runs(&pbuf, srect.x + 10.0, srect.y + 7.0, &[], None, state, sctx);
+            }
+
+            let (qbuf, _) = self.shape_plain_field(
+                &query_field.text,
+                13.0,
+                18.0,
+                srect.w - 20.0,
+                theme.fg,
+                false,
+                Wrap::None,
+            );
+            if state.has_keyboard_focus {
+                self.draw_field_selection_and_cursor(
+                    &query_field,
+                    &qbuf,
+                    srect.x + 10.0,
+                    srect.y + 7.0,
+                    18.0,
+                    theme,
+                    now - state.last_cursor_activity,
+                    sctx,
+                );
+            }
+            if !query_field.text.is_empty() {
+                self.draw_buffer_runs(&qbuf, srect.x + 10.0, srect.y + 7.0, &[], None, state, sctx);
+            }
+            y += search_h;
+        }
+
+        // 3. List Viewport (Dropdown Drawer OR Virtualized Palette Rows)
+        let list_h = (composer_top - y - 4.0).max(ROW_HEIGHT);
+        let list_rect = LogicalRect::new(card_x + 10.0, y, card_w - 20.0, list_h);
+        state.palette_viewport_rect = Some(list_rect);
+
+        if let Some(dd) = state.palette.dropdown {
+            let opts = state.palette.build_dropdown_options(dd, &state.config);
+            let sel = state.palette.dropdown_selected.min(opts.len().saturating_sub(1));
+            let scroll = state
+                .palette
+                .dropdown_scroll
+                .min(opts.len().saturating_sub(MAX_VISIBLE_ROWS));
+
+            // Gliding highlight pill
+            if sel >= scroll && sel < scroll + MAX_VISIBLE_ROWS && !opts.is_empty() {
+                let hy = y + state.palette_dropdown_highlight_y.value;
+                self.fill_rrect_logical(
+                    list_rect.x,
+                    hy,
+                    list_rect.w,
+                    ROW_HEIGHT,
                     8.0,
                     theme.surface_hover.with_alpha(ctx.alpha_mul),
                     true,
                 );
             }
 
-            let (cmd_buf, _) =
-                self.shape_plain_field(entry.cmd, 13.0, 18.0, 160.0, theme.fg, true, Wrap::None);
-            let (lbl_buf, _) = self.shape_plain_field(
-                entry.label,
+            for (vis_idx, (abs_idx, opt)) in opts
+                .iter()
+                .enumerate()
+                .skip(scroll)
+                .take(MAX_VISIBLE_ROWS)
+                .enumerate()
+            {
+                let row_y = y + (vis_idx as f32) * ROW_STEP;
+                let row_rect = LogicalRect::new(list_rect.x, row_y, list_rect.w, ROW_HEIGHT);
+                state.hit_zones.push(HitZone {
+                    rect: row_rect,
+                    target: HitTarget::PaletteDropdownOption(abs_idx),
+                });
+                let hov = matches!(
+                    state.hovered_hit(),
+                    Some(HitTarget::PaletteDropdownOption(i)) if i == abs_idx
+                );
+                if hov && abs_idx != sel {
+                    self.fill_rrect_logical(
+                        row_rect.x,
+                        row_rect.y,
+                        row_rect.w,
+                        row_rect.h,
+                        8.0,
+                        theme.surface.with_alpha(ctx.alpha_mul * 0.7),
+                        true,
+                    );
+                }
+
+                let (tbuf, _) = self.shape_plain_field(
+                    &opt.title,
+                    13.0,
+                    18.0,
+                    220.0,
+                    if opt.is_active { theme.accent } else { theme.fg },
+                    false,
+                    Wrap::None,
+                );
+                self.draw_buffer_runs(&tbuf, row_rect.x + 12.0, row_rect.y + 7.0, &[], None, state, ctx);
+
+                let (sbuf, _) = self.shape_plain_field(
+                    &opt.subtitle,
+                    12.0,
+                    18.0,
+                    row_rect.w - 280.0,
+                    theme.muted,
+                    false,
+                    Wrap::None,
+                );
+                self.draw_buffer_runs(&sbuf, row_rect.x + 195.0, row_rect.y + 7.0, &[], None, state, ctx);
+
+                if opt.is_active {
+                    let (abuf, _) =
+                        self.shape_plain_field("Active", 11.2, 16.0, 60.0, theme.accent, false, Wrap::None);
+                    let aw = measure_buffer_width(&abuf);
+                    self.draw_buffer_runs(
+                        &abuf,
+                        row_rect.x + row_rect.w - aw - 12.0,
+                        row_rect.y + 8.0,
+                        &[],
+                        None,
+                        state,
+                        ctx,
+                    );
+                }
+            }
+            self.draw_palette_scrollbar(opts.len(), scroll, list_rect, theme, ctx);
+            return;
+        }
+
+        let rows = state.palette_rows();
+        if rows.is_empty() {
+            let empty_msg = state
+                .palette
+                .dir_error
+                .clone()
+                .unwrap_or_else(|| "No matching items".to_string());
+            let (ebuf, _) = self.shape_plain_field(
+                &empty_msg,
                 12.5,
                 18.0,
-                card_w - 160.0,
+                list_rect.w - 24.0,
                 theme.muted,
                 false,
                 Wrap::None,
             );
-            self.draw_buffer_runs(
-                &cmd_buf,
-                row_rect.x + 12.0,
-                row_rect.y + 7.0,
-                &[],
-                None,
-                state,
-                ctx,
-            );
-            self.draw_buffer_runs(
-                &lbl_buf,
-                row_rect.x + 114.0,
-                row_rect.y + 7.0,
-                &[],
-                None,
-                state,
-                ctx,
+            self.draw_buffer_runs(&ebuf, list_rect.x + 12.0, y + 7.0, &[], None, state, ctx);
+            return;
+        }
+
+        let sel = state
+            .palette
+            .current_frame()
+            .map(|f| f.selected.min(rows.len().saturating_sub(1)))
+            .unwrap_or(0);
+        let scroll = state
+            .palette
+            .current_frame()
+            .map(|f| f.scroll_row.min(rows.len().saturating_sub(MAX_VISIBLE_ROWS)))
+            .unwrap_or(0);
+
+        if sel >= scroll && sel < scroll + MAX_VISIBLE_ROWS {
+            let hy = y + state.palette_highlight_y.value;
+            self.fill_rrect_logical(
+                list_rect.x,
+                hy,
+                list_rect.w,
+                ROW_HEIGHT,
+                8.0,
+                theme.surface_hover.with_alpha(ctx.alpha_mul),
+                true,
             );
         }
+
+        for (vis_idx, (abs_idx, row)) in rows
+            .iter()
+            .enumerate()
+            .skip(scroll)
+            .take(MAX_VISIBLE_ROWS)
+            .enumerate()
+        {
+            let row_y = y + (vis_idx as f32) * ROW_STEP;
+            let row_rect = LogicalRect::new(list_rect.x, row_y, list_rect.w, ROW_HEIGHT);
+            state.hit_zones.push(HitZone {
+                rect: row_rect,
+                target: HitTarget::PaletteRow(abs_idx),
+            });
+
+            let hov = matches!(state.hovered_hit(), Some(HitTarget::PaletteRow(i)) if i == abs_idx);
+            if hov && abs_idx != sel {
+                self.fill_rrect_logical(
+                    row_rect.x,
+                    row_rect.y,
+                    row_rect.w,
+                    row_rect.h,
+                    8.0,
+                    theme.surface.with_alpha(ctx.alpha_mul * 0.65),
+                    true,
+                );
+            }
+
+            let title_mono = row.title.starts_with('/');
+            let title_col = if row.is_active { theme.accent } else { theme.fg };
+            let (tbuf, _) = self.shape_plain_field(
+                &row.title,
+                13.0,
+                18.0,
+                210.0,
+                title_col,
+                title_mono,
+                Wrap::None,
+            );
+            let title_w = measure_buffer_width(&tbuf).min(195.0);
+            self.draw_buffer_runs(&tbuf, row_rect.x + 12.0, row_rect.y + 7.0, &[], None, state, ctx);
+
+            // Inline editing TextField inside Provider submenu
+            if let Some(field_kind) = row.editable {
+                if state.palette.editing_field == Some(field_kind) {
+                    let ed_x = row_rect.x + 132.0;
+                    let ed_w = (row_rect.w - 144.0).max(140.0);
+                    let ed_rect = LogicalRect::new(ed_x, row_rect.y + 2.0, ed_w, ROW_HEIGHT - 4.0);
+                    self.fill_rrect_logical(
+                        ed_rect.x,
+                        ed_rect.y,
+                        ed_rect.w,
+                        ed_rect.h,
+                        6.0,
+                        theme.bg.with_alpha(ctx.alpha_mul),
+                        true,
+                    );
+                    self.stroke_rrect_logical(
+                        ed_rect.x,
+                        ed_rect.y,
+                        ed_rect.w,
+                        ed_rect.h,
+                        6.0,
+                        1.0,
+                        focus_border.with_alpha(ctx.alpha_mul),
+                    );
+                    let display = if row.masked && !state.palette.edit_buffer.text.is_empty() {
+                        mask_field(&state.palette.edit_buffer)
+                    } else {
+                        state.palette.edit_buffer.clone()
+                    };
+                    let (ebuf, _) = self.shape_plain_field(
+                        &display.text,
+                        12.5,
+                        17.0,
+                        ed_w - 16.0,
+                        theme.fg,
+                        true,
+                        Wrap::None,
+                    );
+                    let eclip = ClipBox {
+                        x0: ((ed_rect.x + 6.0) * ctx.scale).floor() as i32,
+                        y0: ((ed_rect.y + 2.0) * ctx.scale).floor() as i32,
+                        x1: ((ed_rect.x + ed_rect.w - 6.0) * ctx.scale).ceil() as i32,
+                        y1: ((ed_rect.y + ed_rect.h - 2.0) * ctx.scale).ceil() as i32,
+                    }
+                    .intersect(ctx.clip);
+                    let ectx = DrawContext { clip: eclip, ..ctx };
+                    let caret_x = ebuf
+                        .layout_runs()
+                        .next()
+                        .map(|run| glyph_x_for_byte(run.glyphs, display.cursor))
+                        .unwrap_or(0.0);
+                    let offset = (caret_x - (ed_w - 20.0)).max(0.0);
+                    let tx = ed_rect.x + 8.0 - offset;
+                    if state.has_keyboard_focus {
+                        self.draw_field_selection_and_cursor(
+                            &display,
+                            &ebuf,
+                            tx,
+                            ed_rect.y + 5.5,
+                            17.0,
+                            theme,
+                            now - state.last_cursor_activity,
+                            ectx,
+                        );
+                    }
+                    if !display.text.is_empty() {
+                        self.draw_buffer_runs(&ebuf, tx, ed_rect.y + 5.5, &[], None, state, ectx);
+                    }
+                    continue;
+                }
+            }
+
+            let mut right_used = 12.0;
+            if row.is_submenu {
+                let (abuf, _) =
+                    self.shape_plain_field("▸", 12.0, 16.0, 20.0, theme.muted, false, Wrap::None);
+                self.draw_buffer_runs(
+                    &abuf,
+                    row_rect.x + row_rect.w - 18.0,
+                    row_rect.y + 8.0,
+                    &[],
+                    None,
+                    state,
+                    ctx,
+                );
+                right_used = 24.0;
+            }
+            if let Some(badge) = &row.value_badge {
+                let (bbuf, _) = self.shape_plain_field(
+                    badge,
+                    11.2,
+                    15.0,
+                    190.0,
+                    if row.is_active { theme.accent } else { theme.fg },
+                    false,
+                    Wrap::None,
+                );
+                let bw = (measure_buffer_width(&bbuf) + 14.0).min(185.0);
+                let bx = row_rect.x + row_rect.w - right_used - bw;
+                let brect = LogicalRect::new(bx, row_rect.y + 5.0, bw, 22.0);
+                self.fill_rrect_logical(
+                    brect.x,
+                    brect.y,
+                    brect.w,
+                    brect.h,
+                    6.0,
+                    theme.surface.with_alpha(ctx.alpha_mul),
+                    true,
+                );
+                if row.is_dropdown {
+                    self.stroke_rrect_logical(
+                        brect.x,
+                        brect.y,
+                        brect.w,
+                        brect.h,
+                        6.0,
+                        1.0,
+                        theme.line.with_alpha(ctx.alpha_mul),
+                    );
+                }
+                self.draw_buffer_runs(&bbuf, brect.x + 7.0, brect.y + 3.5, &[], None, state, ctx);
+                right_used += bw + 10.0;
+            }
+
+            if let Some(sub) = &row.subtitle {
+                let sub_txt = if row.masked {
+                    "•".repeat(sub.chars().count().min(20))
+                } else {
+                    sub.clone()
+                };
+                let sub_x = (row_rect.x + title_w + 26.0).max(row_rect.x + 132.0);
+                let sub_max_w = (row_rect.x + row_rect.w - right_used - sub_x).max(40.0);
+                if sub_max_w > 48.0 {
+                    let (sbuf, _) = self.shape_plain_field(
+                        &sub_txt,
+                        12.0,
+                        18.0,
+                        sub_max_w,
+                        theme.muted,
+                        row.editable.is_some(),
+                        Wrap::None,
+                    );
+                    let sctx = DrawContext {
+                        clip: ctx.clip.intersect(ClipBox {
+                            x0: (sub_x * ctx.scale).floor() as i32,
+                            x1: ((sub_x + sub_max_w) * ctx.scale).floor() as i32,
+                            ..ctx.clip
+                        }),
+                        ..ctx
+                    };
+                    self.draw_buffer_runs(&sbuf, sub_x, row_rect.y + 7.0, &[], None, state, sctx);
+                }
+            }
+        }
+
+        self.draw_palette_scrollbar(rows.len(), scroll, list_rect, theme, ctx);
+    }
+
+    fn draw_palette_scrollbar(
+        &mut self,
+        total_rows: usize,
+        scroll_row: usize,
+        list_rect: LogicalRect,
+        theme: Theme,
+        ctx: DrawContext,
+    ) {
+        if total_rows <= MAX_VISIBLE_ROWS {
+            return;
+        }
+        let max_s = (total_rows - MAX_VISIBLE_ROWS) as f32;
+        let track_h = (MAX_VISIBLE_ROWS as f32) * ROW_STEP - 8.0;
+        let thumb_h = ((MAX_VISIBLE_ROWS as f32 / total_rows as f32) * track_h).clamp(18.0, track_h);
+        let frac = (scroll_row as f32 / max_s).clamp(0.0, 1.0);
+        let ty = list_rect.y + 2.0 + frac * (track_h - thumb_h);
+        self.fill_rrect_logical(
+            list_rect.x + list_rect.w + 2.0,
+            ty,
+            3.0,
+            thumb_h,
+            1.5,
+            theme.faint.with_alpha(ctx.alpha_mul * 0.75),
+            true,
+        );
     }
 
     fn estimate_settings_height(&self, state: &AppState) -> f32 {
@@ -831,6 +1541,7 @@ impl Renderer {
         let mut y = card_y + 16.0;
         let now = state.now_secs();
         let focus_border = Rgba::lerp_premultiplied(theme.line, theme.accent, 0.65);
+        let kb = state.has_keyboard_focus;
 
         let (title_buf, _) =
             self.shape_plain_field("Settings", 14.0, 20.0, 200.0, theme.fg, false, Wrap::None);
@@ -843,6 +1554,7 @@ impl Renderer {
             target: HitTarget::SettingsClose,
         });
         let done_hov = matches!(state.hovered_hit(), Some(HitTarget::SettingsClose));
+        let done_kb = kb && state.focus_target == FocusTarget::SettingsDone;
         self.fill_rrect_logical(
             done_rect.x,
             done_rect.y,
@@ -854,6 +1566,17 @@ impl Renderer {
                 .with_alpha(ctx.alpha_mul * if done_hov { 0.88 } else { 1.0 }),
             true,
         );
+        if done_kb {
+            self.stroke_rrect_logical(
+                done_rect.x - 1.5,
+                done_rect.y - 1.5,
+                done_rect.w + 3.0,
+                done_rect.h + 3.0,
+                8.0,
+                1.2,
+                theme.fg.with_alpha(ctx.alpha_mul),
+            );
+        }
         let (done_buf, _) = self.shape_plain_field(
             "Done",
             12.0,
@@ -874,12 +1597,9 @@ impl Renderer {
         );
 
         // Dark / Light mode pills
-        for (idx, (mode, label)) in [
-            (ThemeMode::Dark, "Dark"),
-            (ThemeMode::Light, "Light"),
-        ]
-        .iter()
-        .enumerate()
+        for (idx, (mode, label)) in [(ThemeMode::Dark, "Dark"), (ThemeMode::Light, "Light")]
+            .iter()
+            .enumerate()
         {
             let tw = 46.0;
             let tx = done_rect.x - 104.0 + (idx as f32) * 49.0;
@@ -889,7 +1609,8 @@ impl Renderer {
                 target: HitTarget::ThemeToggle(*mode),
             });
             let active = state.config.theme == *mode;
-            if active {
+            let kb_foc = kb && state.focus_target == FocusTarget::SettingsTheme(*mode);
+            if active || kb_foc {
                 self.fill_rrect_logical(
                     trect.x,
                     trect.y,
@@ -906,7 +1627,7 @@ impl Renderer {
                     trect.h,
                     7.0,
                     1.0,
-                    focus_border.with_alpha(ctx.alpha_mul),
+                    if kb_foc { theme.accent } else { focus_border }.with_alpha(ctx.alpha_mul),
                 );
             }
             let (tbuf, _) = self.shape_plain_field(
@@ -923,59 +1644,121 @@ impl Renderer {
 
         y += 32.0;
 
-        // Provider quick-select pills
+        // Provider Profile dropdown + Protocol + Vision + New/Delete Custom pills
         let mut px = pad_x;
-        for (idx, preset) in PRESETS.iter().enumerate() {
-            let (pbuf, _) = self.shape_plain_field(
-                preset.label,
-                11.5,
-                16.0,
-                140.0,
-                theme.fg,
-                false,
-                Wrap::None,
-            );
-            let pw = (measure_buffer_width(&pbuf) + 18.0).max(52.0);
-            if px + pw > card_x + card_w - 20.0 {
-                break;
-            }
-            let prect = LogicalRect::new(px, y, pw, 24.0);
-            state.hit_zones.push(HitZone {
-                rect: prect,
-                target: HitTarget::PresetPill(idx),
-            });
-            let is_match = state.field_base_url.text.trim().trim_end_matches('/')
-                == preset.base_url.trim_end_matches('/');
-            let is_hov = matches!(state.hovered_hit(), Some(HitTarget::PresetPill(i)) if i == idx);
-            let fill = if is_match || is_hov {
+        let prof_label = format!("Profile: {}  ▾", state.config.active_profile_label());
+        let (pbuf, _) =
+            self.shape_plain_field(&prof_label, 11.5, 16.0, 210.0, theme.fg, false, Wrap::None);
+        let pw = (measure_buffer_width(&pbuf) + 18.0).clamp(96.0, 210.0);
+        let prect = LogicalRect::new(px, y, pw, 25.0);
+        state.hit_zones.push(HitZone {
+            rect: prect,
+            target: HitTarget::SettingsProfileToggle,
+        });
+        let prof_foc = kb && state.focus_target == FocusTarget::SettingsProfile;
+        self.fill_rrect_logical(
+            prect.x,
+            prect.y,
+            prect.w,
+            prect.h,
+            7.0,
+            if state.settings_profile_dropdown {
                 theme.surface_hover
             } else {
                 theme.surface
-            };
-            self.fill_rrect_logical(
-                prect.x,
-                prect.y,
-                prect.w,
-                prect.h,
-                7.0,
-                fill.with_alpha(ctx.alpha_mul),
-                true,
-            );
-            if is_match {
-                self.stroke_rrect_logical(
-                    prect.x,
-                    prect.y,
-                    prect.w,
-                    prect.h,
-                    7.0,
-                    1.0,
-                    focus_border.with_alpha(ctx.alpha_mul),
-                );
             }
-            self.draw_buffer_runs(&pbuf, prect.x + 9.0, prect.y + 4.0, &[], None, state, ctx);
-            px += pw + 6.0;
+            .with_alpha(ctx.alpha_mul),
+            true,
+        );
+        self.stroke_rrect_logical(
+            prect.x,
+            prect.y,
+            prect.w,
+            prect.h,
+            7.0,
+            1.0,
+            if prof_foc || state.settings_profile_dropdown {
+                focus_border
+            } else {
+                theme.line
+            }
+            .with_alpha(ctx.alpha_mul),
+        );
+        self.draw_buffer_runs(
+            &pbuf,
+            prect.x + 9.0,
+            prect.y + 4.5,
+            &[],
+            None,
+            state,
+            DrawContext {
+                clip: ctx.clip.intersect(ClipBox {
+                    x0: (prect.x * ctx.scale).ceil() as i32,
+                    x1: ((prect.x + prect.w - 6.0) * ctx.scale).floor() as i32,
+                    ..ctx.clip
+                }),
+                ..ctx
+            },
+        );
+        px += pw + 6.0;
+
+        let proto_lbl = format!("API: {}", state.config.active_format().label());
+        let proto_foc = kb && state.focus_target == FocusTarget::SettingsProtocol;
+        px += self.draw_settings_pill(
+            state,
+            &proto_lbl,
+            px,
+            y,
+            HitTarget::SettingsProtocolToggle,
+            false,
+            proto_foc,
+            ctx,
+        ) + 6.0;
+
+        let vis_lbl = if state.config.vision {
+            "Vision: On"
+        } else {
+            "Vision: Off"
+        };
+        let vis_foc = kb && state.focus_target == FocusTarget::SettingsVision;
+        px += self.draw_settings_pill(
+            state,
+            vis_lbl,
+            px,
+            y,
+            HitTarget::SettingsVisionToggle,
+            state.config.vision,
+            vis_foc,
+            ctx,
+        ) + 6.0;
+
+        let new_foc = kb && state.focus_target == FocusTarget::SettingsNewProfile;
+        px += self.draw_settings_pill(
+            state,
+            "+ Custom",
+            px,
+            y,
+            HitTarget::SettingsNewProfile,
+            false,
+            new_foc,
+            ctx,
+        ) + 6.0;
+
+        if state.config.active_profile_is_custom() && px + 56.0 <= card_x + card_w - 20.0 {
+            let del_foc = kb && state.focus_target == FocusTarget::SettingsDeleteProfile;
+            self.draw_settings_pill(
+                state,
+                "Del",
+                px,
+                y,
+                HitTarget::SettingsDeleteProfile,
+                false,
+                del_foc,
+                ctx,
+            );
         }
 
+        let dropdown_anchor_y = y + 29.0;
         y += 34.0;
 
         // Base URL
@@ -995,11 +1778,26 @@ impl Renderer {
 
         // Optional / keyless API Key
         let key_action = if state.field_api_key.text.is_empty() {
-            Some(("Keyless", HitTarget::ToggleKeyMask, false))
+            Some((
+                "Keyless",
+                HitTarget::ToggleKeyMask,
+                false,
+                false,
+            ))
         } else if state.show_api_key {
-            Some(("Hide", HitTarget::ToggleKeyMask, true))
+            Some((
+                "Hide",
+                HitTarget::ToggleKeyMask,
+                true,
+                kb && state.focus_target == FocusTarget::SettingsKeyMask,
+            ))
         } else {
-            Some(("Show", HitTarget::ToggleKeyMask, true))
+            Some((
+                "Show",
+                HitTarget::ToggleKeyMask,
+                true,
+                kb && state.focus_target == FocusTarget::SettingsKeyMask,
+            ))
         };
         self.draw_labeled_settings_field(
             state,
@@ -1025,6 +1823,7 @@ impl Renderer {
                 if state.loading_models { "..." } else { "Detect" },
                 HitTarget::RefreshModels,
                 true,
+                kb && state.focus_target == FocusTarget::SettingsRefresh,
             )),
             pad_x,
             y,
@@ -1059,13 +1858,14 @@ impl Renderer {
                         target: HitTarget::ModelChip(idx),
                     });
                     let selected = state.field_model.text.trim() == model_id;
+                    let chip_kb = kb && state.focus_target == FocusTarget::SettingsModelChip(idx);
                     self.fill_rrect_logical(
                         mrect.x,
                         mrect.y,
                         mrect.w,
                         mrect.h,
                         6.0,
-                        if selected {
+                        if selected || chip_kb {
                             theme.surface_hover
                         } else {
                             theme.surface
@@ -1073,7 +1873,7 @@ impl Renderer {
                         .with_alpha(ctx.alpha_mul),
                         true,
                     );
-                    if selected {
+                    if selected || chip_kb {
                         self.stroke_rrect_logical(
                             mrect.x,
                             mrect.y,
@@ -1081,7 +1881,7 @@ impl Renderer {
                             mrect.h,
                             6.0,
                             1.0,
-                            focus_border.with_alpha(ctx.alpha_mul),
+                            if chip_kb { theme.accent } else { focus_border }.with_alpha(ctx.alpha_mul),
                         );
                     }
                     self.draw_buffer_runs(
@@ -1115,6 +1915,135 @@ impl Renderer {
                 self.draw_buffer_runs(&sbuf, pad_x, y + 2.0, &[], None, state, ctx);
             }
         }
+
+        // Floating Profile Dropdown overlay when open in Settings panel
+        if state.settings_profile_dropdown {
+            let profiles = state.config.all_profiles();
+            let dd_w = 320.0f32.min(inner_w);
+            let dd_h = ((profiles.len().min(7) as f32) * 30.0 + 10.0).min(above_h - 60.0);
+            let dd_rect = LogicalRect::new(pad_x, dropdown_anchor_y, dd_w, dd_h);
+            self.fill_rrect_logical(
+                dd_rect.x,
+                dd_rect.y,
+                dd_rect.w,
+                dd_rect.h,
+                10.0,
+                theme.float.with_alpha(ctx.alpha_mul),
+                true,
+            );
+            self.stroke_rrect_logical(
+                dd_rect.x,
+                dd_rect.y,
+                dd_rect.w,
+                dd_rect.h,
+                10.0,
+                1.0,
+                focus_border.with_alpha(ctx.alpha_mul),
+            );
+            for (idx, prof) in profiles.iter().enumerate().take(7) {
+                let ry = dd_rect.y + 5.0 + (idx as f32) * 30.0;
+                let rrect = LogicalRect::new(dd_rect.x + 5.0, ry, dd_rect.w - 10.0, 26.0);
+                state.hit_zones.push(HitZone {
+                    rect: rrect,
+                    target: HitTarget::SettingsProfileOption(idx),
+                });
+                let is_sel = idx == state.settings_profile_selected;
+                let is_hov = matches!(
+                    state.hovered_hit(),
+                    Some(HitTarget::SettingsProfileOption(i)) if i == idx
+                );
+                if is_sel || is_hov {
+                    self.fill_rrect_logical(
+                        rrect.x,
+                        rrect.y,
+                        rrect.w,
+                        rrect.h,
+                        6.0,
+                        theme.surface_hover.with_alpha(ctx.alpha_mul),
+                        true,
+                    );
+                }
+                let is_act = prof.id == state.config.active_profile_id;
+                let (nbuf, _) = self.shape_plain_field(
+                    &prof.name,
+                    12.0,
+                    16.0,
+                    140.0,
+                    if is_act { theme.accent } else { theme.fg },
+                    false,
+                    Wrap::None,
+                );
+                self.draw_buffer_runs(&nbuf, rrect.x + 8.0, rrect.y + 5.0, &[], None, state, ctx);
+                let (fbuf, _) = self.shape_plain_field(
+                    prof.format.label(),
+                    11.0,
+                    16.0,
+                    90.0,
+                    theme.muted,
+                    false,
+                    Wrap::None,
+                );
+                let fw = measure_buffer_width(&fbuf);
+                self.draw_buffer_runs(
+                    &fbuf,
+                    rrect.x + rrect.w - fw - 10.0,
+                    rrect.y + 5.5,
+                    &[],
+                    None,
+                    state,
+                    ctx,
+                );
+            }
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn draw_settings_pill(
+        &mut self,
+        state: &mut AppState,
+        label: &str,
+        x: f32,
+        y: f32,
+        target: HitTarget,
+        active: bool,
+        kb_focused: bool,
+        ctx: DrawContext,
+    ) -> f32 {
+        let theme = state.theme;
+        let focus_border = Rgba::lerp_premultiplied(theme.line, theme.accent, 0.65);
+        let (buf, _) =
+            self.shape_plain_field(label, 11.5, 16.0, 140.0, theme.fg, false, Wrap::None);
+        let pw = (measure_buffer_width(&buf) + 16.0).max(40.0);
+        let rect = LogicalRect::new(x, y, pw, 25.0);
+        state.hit_zones.push(HitZone { rect, target });
+        let hov = state.hovered_hit() == Some(target);
+        self.fill_rrect_logical(
+            rect.x,
+            rect.y,
+            rect.w,
+            rect.h,
+            7.0,
+            if active || hov || kb_focused {
+                theme.surface_hover
+            } else {
+                theme.surface
+            }
+            .with_alpha(ctx.alpha_mul),
+            true,
+        );
+        if active || kb_focused {
+            self.stroke_rrect_logical(
+                rect.x,
+                rect.y,
+                rect.w,
+                rect.h,
+                7.0,
+                1.0,
+                if kb_focused { theme.accent } else { focus_border }.with_alpha(ctx.alpha_mul),
+            );
+        }
+        self.draw_buffer_runs(&buf, rect.x + 8.0, rect.y + 4.5, &[], None, state, ctx);
+        pw
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1124,7 +2053,7 @@ impl Renderer {
         label: &str,
         target: FocusTarget,
         masked: bool,
-        right_pill: Option<(&str, HitTarget, bool)>,
+        right_pill: Option<(&str, HitTarget, bool, bool)>,
         x: f32,
         y: f32,
         w: f32,
@@ -1165,7 +2094,7 @@ impl Renderer {
         );
 
         let mut right_reserve = 12.0;
-        if let Some((pill_txt, pill_hit, interactive)) = right_pill {
+        if let Some((pill_txt, pill_hit, interactive, pill_kb)) = right_pill {
             let (pbuf, _) = self.shape_plain_field(
                 pill_txt,
                 11.0,
@@ -1192,6 +2121,17 @@ impl Renderer {
                     theme.surface_hover.with_alpha(ctx.alpha_mul),
                     true,
                 );
+                if pill_kb {
+                    self.stroke_rrect_logical(
+                        prect.x,
+                        prect.y,
+                        prect.w,
+                        prect.h,
+                        6.0,
+                        1.0,
+                        theme.accent.with_alpha(ctx.alpha_mul),
+                    );
+                }
             }
             self.draw_buffer_runs(&pbuf, prect.x + 7.0, prect.y + 4.5, &[], None, state, ctx);
             right_reserve = pw + 14.0;
@@ -1201,20 +2141,11 @@ impl Renderer {
             FocusTarget::SettingsBaseUrl => &state.field_base_url,
             FocusTarget::SettingsApiKey => &state.field_api_key,
             FocusTarget::SettingsModel => &state.field_model,
-            FocusTarget::Composer => &state.composer,
+            _ => &state.composer,
         };
 
         let display_field: TextField = if masked && !field.text.is_empty() {
-            let count = field.text.chars().count();
-            let dots: String = std::iter::repeat('•').take(count).collect();
-            let char_idx = field.text[..field.cursor.min(field.text.len())].chars().count();
-            let anchor_idx = field.text[..field.anchor.min(field.text.len())].chars().count();
-            let dot_len = '•'.len_utf8();
-            TextField {
-                text: dots,
-                cursor: char_idx * dot_len,
-                anchor: anchor_idx * dot_len,
-            }
+            mask_field(field)
         } else {
             field.clone()
         };
@@ -1275,8 +2206,16 @@ impl Renderer {
             theme.syn_keyword, theme.syn_string, theme.syn_number, theme.syn_type, theme.syn_comment]
             .hash(&mut hash);
         (msg.role == Role::User).hash(&mut hash);
-        if msg.role == Role::User { msg.raw_content.hash(&mut hash); }
-        else { msg.stream.shown_text().hash(&mut hash); }
+        if msg.role == Role::User {
+            msg.raw_content.hash(&mut hash);
+            msg.attachments.len().hash(&mut hash);
+            for a in &msg.attachments {
+                a.name.hash(&mut hash);
+                a.size_bytes.hash(&mut hash);
+            }
+        } else {
+            msg.stream.shown_text().hash(&mut hash);
+        }
         msg.stream.reasoning.hash(&mut hash);
         msg.stream.reasoning_active.hash(&mut hash);
         msg.stream.reasoning_duration_secs.map(f64::to_bits).hash(&mut hash);
@@ -1314,6 +2253,40 @@ impl Renderer {
 
         if msg.role == Role::User {
             let max_bubble_w = (inner_w * 0.78).max(160.0);
+            let mut user_chips = Vec::new();
+            let mut chips_w_needed = 0.0f32;
+            let mut chips_h = 0.0f32;
+            if !msg.attachments.is_empty() {
+                let mut rx = 0.0f32;
+                let mut rows = 1usize;
+                for att in &msg.attachments {
+                    let tag = att.kind.badge();
+                    let short = truncate_label(&att.name, 18);
+                    let lbl = if let Some(pages) = att.page_count {
+                        format!("{}  {} · {}p", tag, short, pages)
+                    } else {
+                        format!("{}  {} · {}", tag, short, format_bytes(att.size_bytes))
+                    };
+                    let (cbuf, _) = self.shape_plain_field(
+                        &lbl,
+                        11.0,
+                        15.0,
+                        max_bubble_w - 28.0,
+                        theme.muted,
+                        false,
+                        Wrap::None,
+                    );
+                    let cw = (measure_buffer_width(&cbuf) + 16.0).min(max_bubble_w - 28.0);
+                    if rx > 0.0 && rx + cw > max_bubble_w - 28.0 {
+                        rows += 1;
+                        rx = 0.0;
+                    }
+                    chips_w_needed = chips_w_needed.max(rx + cw);
+                    rx += cw + 6.0;
+                    user_chips.push((lbl, cw));
+                }
+                chips_h = (rows as f32) * 22.0 + ((rows.saturating_sub(1)) as f32) * 5.0 + 8.0;
+            }
             let (buf, text_h) = self.shape_plain_field(
                 &msg.raw_content,
                 14.5,
@@ -1323,13 +2296,16 @@ impl Renderer {
                 false,
                 Wrap::WordOrGlyph,
             );
-            let text_w = measure_buffer_width(&buf).min(max_bubble_w - 28.0);
+            let text_w = measure_buffer_width(&buf)
+                .max(chips_w_needed)
+                .min(max_bubble_w - 28.0);
             let bubble_w = (text_w + 28.0).clamp(48.0, max_bubble_w);
-            let bubble_h = (text_h + 18.0).max(38.0);
+            let bubble_h = (text_h + 18.0 + chips_h).max(38.0);
             return ShapedMessage {
                 msg_idx,
                 role: Role::User,
                 user_buf: Some((buf, bubble_w, bubble_h)),
+                user_chips,
                 thinking_pill: None,
                 blocks: Vec::new(),
                 waiting_ttft: false,
@@ -1605,6 +2581,7 @@ impl Renderer {
             msg_idx,
             role: Role::Assistant,
             user_buf: None,
+            user_chips: Vec::new(),
             thinking_pill,
             blocks: shaped_blocks,
             waiting_ttft,
@@ -1704,7 +2681,41 @@ impl Renderer {
                         1.0,
                         theme.line.with_alpha(mctx.alpha_mul),
                     );
-                    self.draw_buffer_runs(buf, bx + 14.0, my + 9.0, &[], None, state, mctx);
+                    let mut text_off_y = my + 9.0;
+                    if !sm.user_chips.is_empty() {
+                        let start_cx = bx + 14.0;
+                        let max_cx = bx + *bw - 14.0;
+                        let mut cx = start_cx;
+                        let mut cy = my + 9.0;
+                        for (lbl, cw) in &sm.user_chips {
+                            if cx > start_cx && cx + *cw > max_cx {
+                                cx = start_cx;
+                                cy += 27.0;
+                            }
+                            self.fill_rrect_logical(
+                                cx,
+                                cy,
+                                *cw,
+                                22.0,
+                                6.0,
+                                theme.surface.with_alpha(mctx.alpha_mul),
+                                true,
+                            );
+                            let (cbuf, _) = self.shape_plain_field(
+                                lbl,
+                                11.0,
+                                15.0,
+                                *cw - 12.0,
+                                theme.muted,
+                                false,
+                                Wrap::None,
+                            );
+                            self.draw_buffer_runs(&cbuf, cx + 8.0, cy + 3.5, &[], None, state, mctx);
+                            cx += *cw + 6.0;
+                        }
+                        text_off_y = cy + 29.0;
+                    }
+                    self.draw_buffer_runs(buf, bx + 14.0, text_off_y, &[], None, state, mctx);
                 }
                 cur_y += message_h + 18.0;
                 continue;
@@ -2982,9 +3993,11 @@ impl Renderer {
 
         // 1. Minimalist Thin Floating Bar (zero placeholders, zero tooltips)
         {
-            let mut st = AppState::new(AppConfig::default());
+            let mut cfg = AppConfig::default();
+            cfg.model = "preview-no-network".into();
+            let mut st = AppState::new(cfg);
             renderer.panel_transition = PanelTransition::new();
-            renderer.previous_panel = None;
+            renderer.last_above_rect = None;
             renderer.outgoing_panel = None;
             st.has_keyboard_focus = true;
             for _ in 0..90 {
@@ -2998,9 +4011,11 @@ impl Renderer {
 
         // 2. Active Streaming Blur-to-Focus Frontier
         {
-            let mut st = AppState::new(AppConfig::default());
+            let mut cfg = AppConfig::default();
+            cfg.model = "preview-no-network".into();
+            let mut st = AppState::new(cfg);
             renderer.panel_transition = PanelTransition::new();
-            renderer.previous_panel = None;
+            renderer.last_above_rect = None;
             renderer.outgoing_panel = None;
             st.has_keyboard_focus = false;
             st.messages.push(ChatItem::new_user(
@@ -3029,9 +4044,10 @@ impl Renderer {
         {
             let mut cfg = AppConfig::default();
             cfg.theme = ThemeMode::Light;
+            cfg.model = "preview-no-network".into();
             let mut st = AppState::new(cfg);
             renderer.panel_transition = PanelTransition::new();
-            renderer.previous_panel = None;
+            renderer.last_above_rect = None;
             renderer.outgoing_panel = None;
             st.messages.push(ChatItem::new_user(
                 "Show a minimal Rust example and checklist.".to_string(),
@@ -3055,9 +4071,11 @@ impl Renderer {
 
         // 4. Keyless-Capable Settings Panel
         {
-            let mut st = AppState::new(AppConfig::default());
+            let mut cfg = AppConfig::default();
+            cfg.model = "qwen2.5-coder:14b".into();
+            let mut st = AppState::new(cfg);
             renderer.panel_transition = PanelTransition::new();
-            renderer.previous_panel = None;
+            renderer.last_above_rect = None;
             renderer.outgoing_panel = None;
             st.has_keyboard_focus = true;
             st.open_settings();
@@ -3073,7 +4091,6 @@ impl Renderer {
                 st.card_rect.advance(1.0 / 120.0);
                 st.card_radius.advance(1.0 / 120.0);
                 st.presence_spring.advance(1.0 / 120.0);
-
             }
             renderer.render(&mut st);
             let p = out_dir.join("04-settings-keyless.png");
@@ -3096,10 +4113,12 @@ impl Renderer {
             reply.entrance.snap_to(1.0);
             st.messages.push(reply);
             renderer.panel_transition = PanelTransition::new();
-            renderer.previous_panel = None;
+            renderer.last_above_rect = None;
             renderer.outgoing_panel = None;
             renderer.render(&mut st);
-            for _ in 0..120 { st.tick(1.0 / 120.0); }
+            for _ in 0..120 {
+                st.tick(1.0 / 120.0);
+            }
             st.scroll_spring.snap_to(110.0);
             st.user_scrolled_up = true;
             renderer.render(&mut st);
@@ -3108,8 +4127,84 @@ impl Renderer {
             written.push(p);
         }
 
+        // 6. Nested Palette: /settings -> /provider
+        {
+            let mut cfg = AppConfig::default();
+            cfg.model = "claude-sonnet-4-5".into();
+            cfg.select_profile("anthropic");
+            let mut st = AppState::new(cfg);
+            renderer.panel_transition = PanelTransition::new();
+            renderer.last_above_rect = None;
+            renderer.outgoing_panel = None;
+            st.has_keyboard_focus = true;
+            st.palette.open_root();
+            st.palette.push_route(PaletteRoute::Settings);
+            st.palette.push_route(PaletteRoute::Provider);
+            for _ in 0..120 {
+                st.tick(1.0 / 120.0);
+            }
+            renderer.render(&mut st);
+            let p = out_dir.join("06-palette-settings-provider.png");
+            renderer.pixmap.save_png(&p).map_err(|e| e.to_string())?;
+            written.push(p);
+        }
+
+        // 7. Nested Palette: /attach with composer attachment chips
+        {
+            let mut cfg = AppConfig::default();
+            cfg.model = "preview-no-network".into();
+            let mut st = AppState::new(cfg);
+            renderer.panel_transition = PanelTransition::new();
+            renderer.last_above_rect = None;
+            renderer.outgoing_panel = None;
+            st.has_keyboard_focus = true;
+            st.composer.set("Compare the table on page 2 with this mockup");
+            st.attach_raw_image(
+                "screen.png".into(),
+                "image/png".into(),
+                vec![0x89, 0x50, 0x4E, 0x47],
+            );
+            st.palette.open_root();
+            st.palette.push_route(PaletteRoute::Attach);
+            for _ in 0..120 {
+                st.tick(1.0 / 120.0);
+            }
+            renderer.render(&mut st);
+            let p = out_dir.join("07-palette-attach-chips.png");
+            renderer.pixmap.save_png(&p).map_err(|e| e.to_string())?;
+            written.push(p);
+        }
+
         Ok(written)
     }
+}
+
+fn mask_field(field: &TextField) -> TextField {
+    let count = field.text.chars().count();
+    let dots: String = std::iter::repeat('•').take(count).collect();
+    let char_idx = field.text[..field.cursor.min(field.text.len())]
+        .chars()
+        .count();
+    let anchor_idx = field.text[..field.anchor.min(field.text.len())]
+        .chars()
+        .count();
+    let dot_len = '•'.len_utf8();
+    TextField {
+        text: dots,
+        cursor: char_idx * dot_len,
+        anchor: anchor_idx * dot_len,
+    }
+}
+
+fn truncate_label(s: &str, max_chars: usize) -> String {
+    let count = s.chars().count();
+    if count <= max_chars {
+        return s.to_string();
+    }
+    let keep = max_chars.saturating_sub(1);
+    let mut out: String = s.chars().take(keep).collect();
+    out.push('…');
+    out
 }
 
 #[inline]

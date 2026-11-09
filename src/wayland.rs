@@ -415,7 +415,7 @@ impl WaylandApp {
 
     fn update_pointer_cursor(&mut self) {
         let desired = match self.app.hovered_hit() {
-            Some(HitTarget::Input(_)) => CursorIcon::Text,
+            Some(HitTarget::Input(_)) | Some(HitTarget::PaletteSearchBox) => CursorIcon::Text,
             Some(_) => CursorIcon::Pointer,
             None => CursorIcon::Default,
         };

@@ -1,9 +1,12 @@
 mod anim;
+mod attach;
+mod base64;
 mod blur;
 mod config;
 mod ipc;
 mod llm;
 mod markdown;
+mod palette;
 mod presentation;
 mod remend;
 mod render;
@@ -176,7 +179,9 @@ fn execute_self_test() -> Result<(), String> {
 
     // 4. Headless Geist font loading + rich Markdown shaping + Gaussian blur compositing
     let mut renderer = Renderer::new(1.0);
-    let mut app = crate::state::AppState::new(AppConfig::default());
+    let mut test_cfg = AppConfig::default();
+    test_cfg.model = "self-test-model".into();
+    let mut app = crate::state::AppState::new(test_cfg);
     app.messages
         .push(crate::state::ChatItem::new_user("Ping".to_string()));
     let mut reply = crate::state::ChatItem::new_assistant_streaming(0.0);
@@ -191,8 +196,20 @@ fn execute_self_test() -> Result<(), String> {
         return Err("headless renderer produced an empty pixmap".to_string());
     }
 
+    // 5. Hierarchical palette, custom profiles, base64 & attachment prompt smoke check
+    app.palette.open_root();
+    app.palette.push_route(crate::palette::PaletteRoute::Settings);
+    app.palette.push_route(crate::palette::PaletteRoute::Provider);
+    renderer.render(&mut app);
+    if app.palette.breadcrumbs() != vec!["Commands", "Settings", "Provider"] {
+        return Err("unexpected palette breadcrumb stack".to_string());
+    }
+    if crate::base64::encode(b"thetalk") != "dGhldGFsaw==" {
+        return Err("base64 encoding check failed".to_string());
+    }
+
     println!(
-        "thetalk self-test: OK (springs, remend, blur-to-focus frontier, cosmic-text Geist, tiny-skia)"
+        "thetalk self-test: OK (springs, remend, blur-to-focus frontier, cosmic-text Geist, tiny-skia, palette, attachments)"
     );
     Ok(())
 }
