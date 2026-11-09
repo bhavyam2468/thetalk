@@ -133,6 +133,7 @@ impl Attachment {
         };
     }
 
+    #[allow(dead_code)]
     pub fn chip_subtitle(&self) -> String {
         match &self.status {
             AttachmentStatus::Loading => "loading…".to_string(),
@@ -193,6 +194,7 @@ pub struct AttachmentPayload {
 }
 
 impl AttachmentPayload {
+    #[allow(dead_code)]
     pub fn chip_label(&self) -> String {
         match self.kind {
             AttachmentKind::Image => {

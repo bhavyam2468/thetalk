@@ -25,6 +25,7 @@ impl Default for ThemeMode {
 }
 
 impl ThemeMode {
+    #[allow(dead_code)]
     pub fn toggle(self) -> Self {
         match self {
             Self::Dark => Self::Light,

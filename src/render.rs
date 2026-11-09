@@ -6,7 +6,7 @@ use crate::markdown::{
     parse_markdown, unpack_frontier_idx, unpack_link_idx, ListMarker, MdBlock, ParsedMarkdown,
     RichSpan, META_CODESPAN, META_LINK, META_MARK, META_STRIKE,
 };
-use crate::palette::{DropdownKind, PaletteRoute, MAX_VISIBLE_ROWS, ROW_HEIGHT, ROW_STEP};
+use crate::palette::{PaletteRoute, MAX_VISIBLE_ROWS, ROW_HEIGHT, ROW_STEP};
 use crate::presentation::{PanelSnapshot, PanelTransition, TRANSITION_SECONDS};
 use crate::state::{
     AppState, ChatItem, FocusTarget, HitTarget, HitZone, Panel, Role, TextField, BAR_MIN_HEIGHT,

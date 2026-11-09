@@ -102,6 +102,7 @@ pub struct DropdownOption {
     pub title: String,
     pub subtitle: String,
     pub is_active: bool,
+    #[allow(dead_code)]
     pub is_custom: bool,
 }
 

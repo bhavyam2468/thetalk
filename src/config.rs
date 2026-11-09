@@ -24,6 +24,7 @@ impl ApiFormat {
         }
     }
 
+    #[allow(dead_code)]
     pub fn short_label(self) -> &'static str {
         match self {
             Self::OpenAi => "OpenAI",
@@ -31,6 +32,7 @@ impl ApiFormat {
         }
     }
 
+    #[allow(dead_code)]
     pub fn toggle(self) -> Self {
         match self {
             Self::OpenAi => Self::Anthropic,
@@ -334,6 +336,7 @@ impl AppConfig {
         self.vision = p.vision;
     }
 
+    #[allow(dead_code)]
     pub fn sync_to_active_profile(&mut self) {
         let base_url = self.base_url.trim().to_string();
         let api_key = self.api_key.trim().to_string();
@@ -360,6 +363,7 @@ impl AppConfig {
         }
     }
 
+    #[allow(dead_code)]
     pub fn set_active_format(&mut self, format: ApiFormat) {
         self.active_profile_mut().format = format;
     }
@@ -405,6 +409,7 @@ impl AppConfig {
         id
     }
 
+    #[allow(dead_code)]
     pub fn rename_profile(&mut self, id: &str, new_name: &str) -> bool {
         let trimmed = new_name.trim();
         if trimmed.is_empty() {

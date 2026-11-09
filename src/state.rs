@@ -1035,6 +1035,7 @@ impl AppState {
         let _ = self.config.save();
     }
 
+    #[allow(dead_code)]
     pub fn toggle_theme(&mut self) {
         self.set_theme_mode(self.config.theme.toggle());
     }
