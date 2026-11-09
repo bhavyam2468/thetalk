@@ -5,6 +5,34 @@
 This is a product requirement, not a stylistic suggestion. Read
 `AGENT_CONTEXT.md` and `docs/UI_ARCHITECTURE_AUDIT.md` before changing behavior.
 
+## Core user intentions & product philosophy
+
+The user's vision for `thetalk` is an uncompromisingly fast, fluid, and elegant Wayland AI overlay. Every interaction must meet these non-negotiable product standards:
+
+1. **60–120+ FPS Fluidity Everywhere (Zero Animation Lag)**:
+   - Route transitions (e.g., Palette <-> ChatScreen, resizing panels) must never stutter or feel like 20fps. Frame times must remain comfortably under 10ms (allowing 100+ FPS) even at 2x HiDPI.
+   - Never run unoptimized, full-screen pixel operations (such as un-cached CPU blurs or multi-megabyte frame buffer copies) on animated paths. Use techniques like 9-slice cached shadow templates and zero-allocation blits.
+
+2. **Weightless, Kinetic Scrolling (No "Heavy Rock at 10fps")**:
+   - Scrolling through conversations must feel natural, smooth, and kinetic—inspired by modern smooth-scrolling engines (Lenis, GSAP).
+   - Wheel detents must carry adequate momentum (112px impulse) and decay through responsive, critically-damped springs (`SpringSpec::SCROLL`: `stiffness: 240, damping: 31`).
+   - Touchpad continuous scrolls must never hard-snap dead on finger release; they must preserve momentum and glide gracefully.
+   - Horizontal overflow (tables, code blocks) must be intuitive: hovering directly over wide blocks allows mouse wheel scrolling horizontally without forcing the user to hold Shift.
+
+3. **First-Class Reasoning & Thinking Experience**:
+   - Thinking blocks (`<think>`) are integral to modern LLM interaction and must be polished with care.
+   - Expansion and contraction must be a smooth accordion animation using spatial springs (`SpringSpec::DEFAULT_SPATIAL`), never an abrupt instantaneous snap.
+   - Streaming tokens inside thinking blocks must feature a subtle, gentle blur-to-focus and opacity reveal animation. It should not be as intense as the primary answer text, but soft, refined, and visually alive.
+   - Visual containment is strict: vertical indicator lines, reasoning tokens, and quotes must never bleed or overflow into the bottom composer input bar.
+
+4. **Robust Markdown Layout & Aesthetics**:
+   - Code blocks must never wrap artificially (`Wrap::None` with unbounded layout width) so code formatting remains intact.
+   - Markdown tables must have readable minimum column widths, crisp column dividers, and clear scroll indicators (track + thumb) when overflowing.
+
+5. **Modern, Grounded Rust Engineering**:
+   - Write idiomatic, modern, high-performance Rust. Research upstream crates, avoid legacy/deprecated patterns, profile before and after changes, and eliminate unnecessary memory allocations, bounds checks, or CPU bottlenecks.
+   - Verify every change with automated tests (`cargo test`), renderer benchmarks (`benchmark-render.sh`), and live compositor tests on Wayland/niri (`verify_on_niri.sh`).
+
 ## Why this rule exists
 
 The user observed transitions that worked in one direction but snapped in the
