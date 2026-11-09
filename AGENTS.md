@@ -5,6 +5,10 @@
 This is a product requirement, not a stylistic suggestion. Read
 `AGENT_CONTEXT.md` and `docs/UI_ARCHITECTURE_AUDIT.md` before changing behavior.
 
+## Core philosophy
+
+When a person looks at this app, the first word that should come to their mind should be "finished".
+
 ## Why this rule exists
 
 The user observed transitions that worked in one direction but snapped in the
@@ -42,27 +46,6 @@ Do not perform a speculative whole-project rewrite. Refactor along actual
 ownership boundaries, record remaining technical debt honestly, and make each
 change reviewable. Work only on the session's assigned branch.
 
-## User's intent & observations (from prompt)
-
-The user's direct observations and requirements for the app's feel, animations, and efficiency:
-
-> "the ui problems i didnt talk about them:
-> 
-> mostly its with markdown components like tables etc
-> 
-> firstly theres no streaming animation inside the thinking blocks, dont make it as strong as the general one, but give it a streaming animation too, a very simple one but give it, also the thinking box expansion and contraction doesnt have any animation, also general scrolling in the chatarea feels very slow and like tedious, like just weird
-> 
-> also the app making animations from the chatscreen looks weird like the pallete to chatscreen or chatscreen to pallette those animations feel like theyre 20fps or smthn, its genuinely lagging a bit, the entire application, while scrolling and all when in chat screen
-> 
-> maybe theyre not very efficient, (research about rust, maybe youre bad at writing it and using old libraries or something, okay actually do this now, audit the whole codebase again going over everything with your search tool, researching alternatives, better implementation ways, more efficient ways to write rust, newer libraries etc... this is the main issue i think, its definitely lagging a lot)"
-
-### Core rules derived from the user's intent:
-- **No 20fps or stuttering animations**: Route transitions (palette to chatscreen, chatscreen to palette) and scrolling must feel completely fluid and high-framerate (60–120+ FPS), not lagging or dropping frames due to inefficient rendering.
-- **Thinking box streaming animation**: Thinking blocks must have a simple, subtle streaming animation (not as strong as the main response text, but visible and pleasant).
-- **Thinking box expansion/contraction animation**: Expanding and contracting the thinking box must be smoothly animated, never snapping instantly.
-- **Natural, fluid chat scrolling**: General scrolling in the chat area must never feel slow, tedious, or weird; it must glide with responsive kinetic momentum.
-- **Markdown components (tables, code blocks)**: Tables and code blocks must render properly without awkward clipping or wrapping, with readable column widths, subtle dividers, and easy horizontal scrolling when hovered.
-- **Research modern, high-efficiency Rust**: Do not settle for naive or outdated implementations; search for better alternatives, modern libraries, and high-performance Rust patterns that eliminate lag.
 
 ## Rendering/performance rules learned in the Markdown audit
 
