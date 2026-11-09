@@ -5,34 +5,6 @@
 This is a product requirement, not a stylistic suggestion. Read
 `AGENT_CONTEXT.md` and `docs/UI_ARCHITECTURE_AUDIT.md` before changing behavior.
 
-## Core user intentions & product philosophy
-
-The user's vision for `thetalk` is an uncompromisingly fast, fluid, and elegant Wayland AI overlay. Every interaction must meet these non-negotiable product standards:
-
-1. **60–120+ FPS Fluidity Everywhere (Zero Animation Lag)**:
-   - Route transitions (e.g., Palette <-> ChatScreen, resizing panels) must never stutter or feel like 20fps. Frame times must remain comfortably under 10ms (allowing 100+ FPS) even at 2x HiDPI.
-   - Never run unoptimized, full-screen pixel operations (such as un-cached CPU blurs or multi-megabyte frame buffer copies) on animated paths. Use techniques like 9-slice cached shadow templates and zero-allocation blits.
-
-2. **Weightless, Kinetic Scrolling (No "Heavy Rock at 10fps")**:
-   - Scrolling through conversations must feel natural, smooth, and kinetic—inspired by modern smooth-scrolling engines (Lenis, GSAP).
-   - Wheel detents must carry adequate momentum (112px impulse) and decay through responsive, critically-damped springs (`SpringSpec::SCROLL`: `stiffness: 240, damping: 31`).
-   - Touchpad continuous scrolls must never hard-snap dead on finger release; they must preserve momentum and glide gracefully.
-   - Horizontal overflow (tables, code blocks) must be intuitive: hovering directly over wide blocks allows mouse wheel scrolling horizontally without forcing the user to hold Shift.
-
-3. **First-Class Reasoning & Thinking Experience**:
-   - Thinking blocks (`<think>`) are integral to modern LLM interaction and must be polished with care.
-   - Expansion and contraction must be a smooth accordion animation using spatial springs (`SpringSpec::DEFAULT_SPATIAL`), never an abrupt instantaneous snap.
-   - Streaming tokens inside thinking blocks must feature a subtle, gentle blur-to-focus and opacity reveal animation. It should not be as intense as the primary answer text, but soft, refined, and visually alive.
-   - Visual containment is strict: vertical indicator lines, reasoning tokens, and quotes must never bleed or overflow into the bottom composer input bar.
-
-4. **Robust Markdown Layout & Aesthetics**:
-   - Code blocks must never wrap artificially (`Wrap::None` with unbounded layout width) so code formatting remains intact.
-   - Markdown tables must have readable minimum column widths, crisp column dividers, and clear scroll indicators (track + thumb) when overflowing.
-
-5. **Modern, Grounded Rust Engineering**:
-   - Write idiomatic, modern, high-performance Rust. Research upstream crates, avoid legacy/deprecated patterns, profile before and after changes, and eliminate unnecessary memory allocations, bounds checks, or CPU bottlenecks.
-   - Verify every change with automated tests (`cargo test`), renderer benchmarks (`benchmark-render.sh`), and live compositor tests on Wayland/niri (`verify_on_niri.sh`).
-
 ## Why this rule exists
 
 The user observed transitions that worked in one direction but snapped in the
@@ -69,6 +41,28 @@ animation or focus workaround for each reported symptom.
 Do not perform a speculative whole-project rewrite. Refactor along actual
 ownership boundaries, record remaining technical debt honestly, and make each
 change reviewable. Work only on the session's assigned branch.
+
+## User's intent & observations (from prompt)
+
+The user's direct observations and requirements for the app's feel, animations, and efficiency:
+
+> "the ui problems i didnt talk about them:
+> 
+> mostly its with markdown components like tables etc
+> 
+> firstly theres no streaming animation inside the thinking blocks, dont make it as strong as the general one, but give it a streaming animation too, a very simple one but give it, also the thinking box expansion and contraction doesnt have any animation, also general scrolling in the chatarea feels very slow and like tedious, like just weird
+> 
+> also the app making animations from the chatscreen looks weird like the pallete to chatscreen or chatscreen to pallette those animations feel like theyre 20fps or smthn, its genuinely lagging a bit, the entire application, while scrolling and all when in chat screen
+> 
+> maybe theyre not very efficient, (research about rust, maybe youre bad at writing it and using old libraries or something, okay actually do this now, audit the whole codebase again going over everything with your search tool, researching alternatives, better implementation ways, more efficient ways to write rust, newer libraries etc... this is the main issue i think, its definitely lagging a lot)"
+
+### Core rules derived from the user's intent:
+- **No 20fps or stuttering animations**: Route transitions (palette to chatscreen, chatscreen to palette) and scrolling must feel completely fluid and high-framerate (60–120+ FPS), not lagging or dropping frames due to inefficient rendering.
+- **Thinking box streaming animation**: Thinking blocks must have a simple, subtle streaming animation (not as strong as the main response text, but visible and pleasant).
+- **Thinking box expansion/contraction animation**: Expanding and contracting the thinking box must be smoothly animated, never snapping instantly.
+- **Natural, fluid chat scrolling**: General scrolling in the chat area must never feel slow, tedious, or weird; it must glide with responsive kinetic momentum.
+- **Markdown components (tables, code blocks)**: Tables and code blocks must render properly without awkward clipping or wrapping, with readable column widths, subtle dividers, and easy horizontal scrolling when hovered.
+- **Research modern, high-efficiency Rust**: Do not settle for naive or outdated implementations; search for better alternatives, modern libraries, and high-performance Rust patterns that eliminate lag.
 
 ## Rendering/performance rules learned in the Markdown audit
 
